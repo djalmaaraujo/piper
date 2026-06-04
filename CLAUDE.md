@@ -43,6 +43,9 @@ binary. Keep it small, readable, and boring.
 - The TCP port is **read-only**: non-GET/HEAD requests get 405. There is **no
   network write surface** — output is fed only by a same-user local process over
   the unix socket.
+- The web index (`/`) lists every running stream, so it's an enumeration
+  surface — **off by default**, returns 404. A user opts in per run with
+  `--manager`; while any running piper has it, `/` is served.
 - State and socket files are `0600`.
 - `--public` (tunnels) exposes the *whole* port to the internet. Don't stream
   secrets; the page/stream is unauthenticated.

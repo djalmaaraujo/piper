@@ -78,6 +78,7 @@ piper --tailscale <command>     # force Tailscale Funnel
 piper --cloudflared <command>   # force a Cloudflare quick tunnel (no account)
 piper --ngrok <command>         # force ngrok
 piper --port 8080 <command>     # share on a custom port
+piper --manager <command>       # enable the web index (/) of running streams
 piper --list                    # list pipers running on this machine
 <command> | piper               # pipe mode (reads stdin)
 ```
@@ -89,8 +90,9 @@ Just run `piper` again — it won't clash. Each instance gets a unique id and is
 ```
 http://localhost:9999/USHS82          # browser (terminal-style log page)
 curl -N http://localhost:9999/USHS82  # raw stream
-http://localhost:9999/                # index of everything running
 ```
+
+The index of everything running (`http://localhost:9999/`) is **disabled by default** so a viewer can't enumerate your streams — you need the id to reach one. Start any piper with `--manager` to enable the index page.
 
 The first piper to start owns the HTTP server (the "host"); later ones attach to it and push their output over a local unix socket. If the host exits, another instance takes over automatically. The default port is `9999`, but if something else is already using it piper quietly tries the next free port (and other pipers find it there). Running pipers are tracked in `~/piper-config.json`; hitting an id that isn't running returns a friendly *broken pipe* page.
 

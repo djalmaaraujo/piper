@@ -30,6 +30,7 @@ type stream struct {
 	pid     int
 	role    string // "host" or "guest"
 	started string
+	manager bool // this piper opted into exposing the web index
 	hub     *hub
 }
 
@@ -74,6 +75,18 @@ func (rg *registry) get(id string) (*stream, bool) {
 	defer rg.mu.Unlock()
 	s, ok := rg.streams[id]
 	return s, ok
+}
+
+// managerOn reports whether any running piper enabled the web index.
+func (rg *registry) managerOn() bool {
+	rg.mu.Lock()
+	defer rg.mu.Unlock()
+	for _, s := range rg.streams {
+		if s.manager {
+			return true
+		}
+	}
+	return false
 }
 
 func (rg *registry) list() []*stream {
@@ -121,7 +134,13 @@ func (rg *registry) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	path := strings.Trim(r.URL.Path, "/")
 	if path == "" {
-		rg.serveIndex(w, r)
+		// The index lists every running stream, so it's an enumeration surface.
+		// Off by default — only served when a piper opted in with --manager.
+		if rg.managerOn() {
+			rg.serveIndex(w, r)
+		} else {
+			rg.serveIndexDisabled(w, r)
+		}
 		return
 	}
 
@@ -158,6 +177,7 @@ type guestHeader struct {
 	Cmd     string `json:"cmd"`
 	PID     int    `json:"pid"`
 	Started string `json:"started"`
+	Manager bool   `json:"manager"`
 }
 
 // acceptGuests serves the host's unix socket: each connecting guest registers a
@@ -188,7 +208,7 @@ func handleGuestConn(conn net.Conn, rg *registry) {
 	hb.echo = false // don't print a guest's output on the host's terminal
 	st := &stream{
 		id: hdr.ID, cmd: hdr.Cmd, pid: hdr.PID, role: "guest",
-		started: hdr.Started, hub: hb,
+		started: hdr.Started, manager: hdr.Manager, hub: hb,
 	}
 	rg.add(st)
 	defer rg.remove(hdr.ID)
@@ -231,6 +251,17 @@ func (rg *registry) serveIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, indexHTML, rows.String())
+}
+
+func (rg *registry) serveIndexDisabled(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotFound)
+	if !wantsHTML(r) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		io.WriteString(w, "index disabled — start a piper with --manager to enable it.\nopen a stream directly at /<id>.\n")
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	io.WriteString(w, indexDisabledHTML)
 }
 
 func (rg *registry) serveBrokenPipe(w http.ResponseWriter, r *http.Request, id string) {
@@ -319,7 +350,7 @@ func becomeHost(ln net.Listener, cfg *config, port int, id string, h *hub) {
 	rg := newRegistry(port)
 	rg.add(&stream{
 		id: id, cmd: cmdLabel(cfg), pid: os.Getpid(), role: "host",
-		started: nowStamp(), hub: h,
+		started: nowStamp(), manager: cfg.manager, hub: h,
 	})
 
 	// Local unix socket for guests. Winning the TCP bind makes us the authority,
@@ -336,7 +367,7 @@ func becomeHost(ln net.Listener, cfg *config, port int, id string, h *hub) {
 	}
 
 	tunnelURL := startTunnelOnce(cfg, port)
-	printBanner(port, id, "host", tunnelURL)
+	printBanner(port, id, "host", cfg.manager, tunnelURL)
 	srv := &http.Server{Handler: rg}
 	_ = srv.Serve(ln)
 }
@@ -349,14 +380,14 @@ func becomeGuest(cfg *config, port int, id string, h *hub) error {
 	defer conn.Close()
 
 	hdr, _ := json.Marshal(guestHeader{
-		ID: id, Cmd: cmdLabel(cfg), PID: os.Getpid(), Started: nowStamp(),
+		ID: id, Cmd: cmdLabel(cfg), PID: os.Getpid(), Started: nowStamp(), Manager: cfg.manager,
 	})
 	if _, err := conn.Write(append(hdr, '\n')); err != nil {
 		return err
 	}
 
 	tunnelURL := startTunnelOnce(cfg, port)
-	printBanner(port, id, "guest", tunnelURL)
+	printBanner(port, id, "guest", cfg.manager, tunnelURL)
 
 	ch, snap := h.register()
 	defer h.unregister(ch)
@@ -440,7 +471,7 @@ func cleanup() {
 // ---------------------------------------------------------------------------
 // banner
 
-func printBanner(port int, id, role, tunnelURL string) {
+func printBanner(port int, id, role string, manager bool, tunnelURL string) {
 	base := fmt.Sprintf("http://localhost:%d", port)
 	tsIP := tailscaleIP()
 	w := os.Stderr
@@ -454,7 +485,9 @@ func printBanner(port int, id, role, tunnelURL string) {
 	if tunnelURL != "" {
 		fmt.Fprintf(w, "  Public:    %s/%s\n", tunnelURL, id)
 	}
-	fmt.Fprintf(w, "  Index:     %s/\n", base)
+	if manager {
+		fmt.Fprintf(w, "  Index:     %s/  (--manager)\n", base)
+	}
 
 	viewer := base + "/" + id
 	switch {
@@ -469,6 +502,23 @@ func printBanner(port int, id, role, tunnelURL string) {
 
 // ---------------------------------------------------------------------------
 // inline pages
+
+const indexDisabledHTML = `<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>piper</title>
+<style>
+  html,body { height:100%; margin:0; background:#0f172a; color:#e6e8f0;
+              font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .wrap { height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:24px; }
+  h1 { font-size:20px; margin:0 0 8px; }
+  p { color:#94a3b8; margin:2px 0; }
+  code { color:#e6e8f0; }
+</style></head><body><div class="wrap">
+<h1>🔒 index disabled</h1>
+<p>listing every stream is off by default.</p>
+<p>start a piper with <code>--manager</code> to enable this page,</p>
+<p>or open a stream directly at <code>/&lt;id&gt;</code>.</p>
+</div></body></html>`
 
 const indexHTML = `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">

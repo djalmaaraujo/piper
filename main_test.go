@@ -185,7 +185,7 @@ func TestHTTPRouting(t *testing.T) {
 	rg := newRegistry(9999)
 	h := newHub(100)
 	h.appendReplay([]byte("replayed-line\n"))
-	rg.add(&stream{id: "ABC123", cmd: "echo hi", role: "host", hub: h})
+	rg.add(&stream{id: "ABC123", cmd: "echo hi", role: "host", manager: true, hub: h})
 	srv := httptest.NewServer(rg)
 	defer srv.Close()
 
@@ -210,6 +210,26 @@ func TestHTTPRouting(t *testing.T) {
 		body, _ := io.ReadAll(resp.Body)
 		if !strings.Contains(string(body), "ABC123") {
 			t.Errorf("index should list the stream id, got %q", body)
+		}
+	})
+
+	t.Run("index disabled without --manager", func(t *testing.T) {
+		t.Setenv("PIPER_CONFIG", filepath.Join(t.TempDir(), "c.json"))
+		rg2 := newRegistry(9998)
+		rg2.add(&stream{id: "NOMGR0", cmd: "echo hi", role: "host", hub: newHub(10)})
+		s2 := httptest.NewServer(rg2)
+		defer s2.Close()
+		resp, err := http.Get(s2.URL + "/")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("index should be 404 without --manager, got %d", resp.StatusCode)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		if strings.Contains(string(body), "NOMGR0") {
+			t.Error("disabled index must not leak stream ids")
 		}
 	})
 
@@ -303,9 +323,10 @@ func silenceStdout(t *testing.T) {
 
 func TestBrokerRouting(t *testing.T) {
 	silenceStdout(t)
+	t.Setenv("PIPER_CONFIG", filepath.Join(t.TempDir(), "piper-config.json"))
 	rg := newRegistry(9999)
 	h := newHub(100)
-	rg.add(&stream{id: "ABC123", cmd: "echo hi", pid: 1, role: "host", hub: h})
+	rg.add(&stream{id: "ABC123", cmd: "echo hi", pid: 1, role: "host", manager: true, hub: h})
 	srv := httptest.NewServer(rg)
 	defer srv.Close()
 

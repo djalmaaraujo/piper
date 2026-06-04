@@ -89,6 +89,7 @@ type config struct {
 	help        bool
 	showVersion bool
 	list        bool   // --list: show running pipers
+	manager     bool   // --manager: enable the web index of running streams
 	public      bool   // expose via a tunnel
 	provider    string // forced provider name, or "" for auto-detect
 }
@@ -113,6 +114,8 @@ func parseArgs(argv []string) (*config, error) {
 			c.showVersion = true
 		case "--list", "--ls":
 			c.list = true
+		case "--manager":
+			c.manager = true
 		case "--public":
 			c.public = true
 		case "--tailscale", "--cloudflared", "--ngrok":
@@ -159,6 +162,7 @@ Usage:
   piper --cloudflared <cmd>    force a Cloudflare quick tunnel (no account)
   piper --ngrok <command>      force ngrok
   piper --port <n> <command>   share on a custom port (default 9999)
+  piper --manager <command>    enable the web index (/) of running streams
   piper --list                 list pipers currently running on this machine
   <command> | piper            pipe mode (reads stdin)
 
