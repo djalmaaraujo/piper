@@ -208,17 +208,44 @@ func runScreenSource(cfg *config, h *hub) int {
 	if fps > 30 {
 		fps = 30
 	}
-	interval := time.Second / time.Duration(fps)
 
 	tmp := filepath.Join(os.TempDir(), fmt.Sprintf("piper-screen-%d.jpg", os.Getpid()))
 	defer os.Remove(tmp)
 
-	fmt.Fprintf(os.Stderr, "  Sharing:   %s  (%d fps)\n", win.label(), fps)
+	// Warm up: time one capture so we can report (and not promise) a real rate.
+	// screencapture spawns a process per frame, so that time is the ceiling.
+	warm := time.Now()
+	frame, err := captureWindow(win.ID, tmp, cfg.scale, cfg.quality)
+	capMs := time.Since(warm).Milliseconds()
+	maxFps := 1
+	if capMs > 0 {
+		maxFps = int(1000 / capMs)
+	}
+	if maxFps < 1 {
+		maxFps = 1
+	}
+	eff := fps
+	if eff > maxFps {
+		eff = maxFps
+	}
+	interval := time.Second / time.Duration(eff)
+
+	note := ""
+	if fps > maxFps {
+		note = fmt.Sprintf("  (asked %d, capture allows ~%d)", fps, maxFps)
+	}
+	fmt.Fprintf(os.Stderr, "  Sharing:   %s  (%d fps%s)\n", win.label(), eff, note)
+
+	// Send the warm-up frame immediately so viewers don't wait a full interval.
+	if err == nil && len(frame) > 0 {
+		h.broadcast(mjpegFrame(frame))
+	}
 
 	misses := 0
 	for !h.isClosed() {
 		start := time.Now()
-		if frame, err := captureWindow(win.ID, tmp, cfg.scale); err == nil && len(frame) > 0 {
+		frame, err := captureWindow(win.ID, tmp, cfg.scale, cfg.quality)
+		if err == nil && len(frame) > 0 {
 			h.broadcast(mjpegFrame(frame))
 			misses = 0
 		} else {
@@ -235,15 +262,24 @@ func runScreenSource(cfg *config, h *hub) int {
 	return 0
 }
 
-// captureWindow grabs one window to a temp JPEG, optionally downscales it with
-// sips, reads the bytes, then removes the file.
-func captureWindow(id int, tmp string, scale int) ([]byte, error) {
+// captureWindow grabs one window to a temp JPEG, then shrinks it with a single
+// sips pass (downscale + JPEG quality — fewer bytes, no extra process), reads
+// the bytes, and removes the file.
+func captureWindow(id int, tmp string, scale, quality int) ([]byte, error) {
 	cmd := exec.Command("screencapture", "-x", "-o", "-l"+strconv.Itoa(id), "-t", "jpg", tmp)
 	if err := cmd.Run(); err != nil {
 		return nil, err
 	}
+	// One sips invocation does both resize and quality so we don't spawn twice.
+	args := []string{}
 	if scale > 0 {
-		_ = exec.Command("sips", "-Z", strconv.Itoa(scale), tmp).Run()
+		args = append(args, "-Z", strconv.Itoa(scale))
+	}
+	if quality > 0 {
+		args = append(args, "-s", "formatOptions", strconv.Itoa(quality))
+	}
+	if len(args) > 0 {
+		_ = exec.Command("sips", append(args, tmp)...).Run()
 	}
 	data, err := os.ReadFile(tmp)
 	os.Remove(tmp)

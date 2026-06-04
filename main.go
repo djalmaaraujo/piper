@@ -110,6 +110,7 @@ type config struct {
 	listWindows bool   // `piper screen --list-windows`
 	fps         int    // screen capture rate
 	scale       int    // screen max width in px (0 = native)
+	quality     int    // screen JPEG quality 1-100
 }
 
 // kind reports the stream type for the broker/page: "mjpeg" for screen, else "text".
@@ -121,7 +122,7 @@ func (c *config) kind() string {
 }
 
 func parseArgs(argv []string) (*config, error) {
-	c := &config{port: defaultPort, fps: 5, scale: 1280}
+	c := &config{port: defaultPort, fps: 5, scale: 1100, quality: 60}
 
 	if env := os.Getenv("PORT"); env != "" {
 		p, err := strconv.Atoi(env)
@@ -169,6 +170,16 @@ func parseArgs(argv []string) (*config, error) {
 				return nil, fmt.Errorf("invalid scale: %q", argv[i+1])
 			}
 			c.scale = n
+			i++
+		case "--quality":
+			if i+1 >= len(argv) {
+				return nil, errors.New("--quality needs a value")
+			}
+			n, err := strconv.Atoi(argv[i+1])
+			if err != nil || n < 1 || n > 100 {
+				return nil, fmt.Errorf("invalid quality (1-100): %q", argv[i+1])
+			}
+			c.quality = n
 			i++
 		case "--public":
 			c.public = true

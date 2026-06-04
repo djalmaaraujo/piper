@@ -115,8 +115,9 @@ Share a single window to the same web page, as a live image:
 piper screen                       # native picker — choose a window from a list
 piper screen "Chrome"              # share the first window matching "Chrome"
 piper screen --list-windows        # print shareable windows
-piper screen --fps 10 "Slack"      # faster updates
+piper screen --fps 10 "Slack"      # target rate (capped to what capture allows)
 piper screen --scale 1600 "Cursor" # cap frame width (px); 0 = native
+piper screen --quality 40 "Chrome" # JPEG quality 1-100 (lower = smaller/faster)
 ```
 
 Run with no name and piper pops a **native window picker** (a macOS list dialog) to choose from. It captures the chosen window with `screencapture`, streams it as MJPEG to `/<id>` (image centered on the page), and viewers watch in a browser.
@@ -124,8 +125,8 @@ Run with no name and piper pops a **native window picker** (a macOS list dialog)
 **Permission.** Screen sharing needs macOS **Screen Recording** access (to read window titles and capture). piper asks for it **only the first time you run `piper screen`** — never when streaming commands. If you miss the prompt, enable your terminal under *System Settings → Privacy & Security → Screen Recording* and run it again.
 
 **Resource use / limits.**
-- Each frame is one `screencapture` (+ a `sips` downscale). CPU scales with **fps × window size** — keep fps modest (default 5) for big Retina windows.
-- Bandwidth ≈ **fps × frame size** (~100–300 KB/frame at `--scale 1280`). At 8 fps that's ~1–2 MB/s — mind it over a tunnel; lower `--fps` or `--scale` for remote viewers.
+- Each frame is one `screencapture` (+ a single `sips` pass for resize + quality). That capture spawns a process, so the real ceiling is ~5–8 fps; piper measures it and reports the actual rate (`asked 30, capture allows ~5`) instead of pretending.
+- Bandwidth ≈ **fps × frame size**. Lower `--quality` (default 60) and `--scale` (default 1100) shrink frames a lot — drop them for remote viewers over a tunnel.
 - It's a frame stream, not smooth video — great for "watch what's happening", not 60 fps motion.
 - **Disk stays bounded**: frames use one temp file, overwritten each tick and deleted right after it's read (and on exit) — nothing accumulates.
 - Sharing the window you're *watching* in just produces a harmless infinity-mirror effect; resource use is fixed at the capture rate, no feedback loop.
