@@ -25,18 +25,22 @@ piper npm run build
 ```
 
 ```
-  Stream ready!
-  Local:     http://localhost:9999
-  Tailscale: http://100.x.y.z:9999
+  Stream ready!  id QGNABD  (host)
+  Local:     http://localhost:9999/QGNABD
+  Tailscale: http://100.x.y.z:9999/QGNABD
 
-  Viewers:   curl -N http://100.x.y.z:9999
+  Terminal:  open http://100.x.y.z:9999/QGNABD in a browser
+  Viewers:   curl -N http://100.x.y.z:9999/QGNABD
+  Tip:       run with --manager to view multiple pipes at http://100.x.y.z:9999/
 ```
 
-Now `curl -N http://localhost:9999` from another machine (or open it in a browser) and watch the build scroll by.
+Now `curl -N http://100.x.y.z:9999/QGNABD` from another machine (or open it in a browser) and watch the build scroll by.
 
 ## Features
 
 - **Single static binary** — written in Go, zero runtime dependencies. No Node, no Python, nothing to install alongside it.
+- **Run several at once** — every piper gets a unique id and shares one port. The first to start hosts the server; the rest attach to it automatically (no daemon, no port juggling). `piper --list` shows what's running.
+- **Browser view** — open the URL in a browser for a dark, auto-scrolling log page (a tiny dependency-free HTML page embedded in the binary). `curl` still gets the raw stream.
 - **Stream live output** — every line of stdout/stderr is broadcast to all connected viewers as it happens.
 - **Real TTY, no buffering** — runs your command under `script(1)` so colors and progress bars render and output isn't stuck in a pipe buffer.
 - **Two modes** — run a command directly (`piper <cmd>`) or pipe into it (`somecmd | piper`).
@@ -75,9 +79,24 @@ piper --public <command>        # also share publicly (auto-detect a tunnel)
 piper --tailscale <command>     # force Tailscale Funnel
 piper --cloudflared <command>   # force a Cloudflare quick tunnel (no account)
 piper --ngrok <command>         # force ngrok
-piper --port 8080 <command>     # listen on a custom port
+piper --port 8080 <command>     # share on a custom port
+piper --manager <command>       # enable the web index (/) of running streams
+piper --list                    # list pipers running on this machine
 <command> | piper               # pipe mode (reads stdin)
 ```
+
+### Running several at once
+
+Just run `piper` again — it won't clash. Each instance gets a unique id and is served on the same port:
+
+```
+http://localhost:9999/USHS82          # browser (terminal-style log page)
+curl -N http://localhost:9999/USHS82  # raw stream
+```
+
+The index of everything running (`http://localhost:9999/`) is **disabled by default** so a viewer can't enumerate your streams — you need the id to reach one. Start any piper with `--manager` to enable the index page.
+
+The first piper to start owns the HTTP server (the "host"); later ones attach to it and push their output over a local unix socket. If the host exits, another instance takes over automatically. The default port is `9999`, but if something else is already using it piper quietly tries the next free port (and other pipers find it there). Running pipers are tracked in `~/piper-config.json`; hitting an id that isn't running returns a friendly *broken pipe* page.
 
 ### Public sharing
 
@@ -109,11 +128,13 @@ piper --port 8080 pytest -v
 
 ### Viewing a stream
 
+Each stream has its own id (shown in the banner). Use it in the URL:
+
 ```bash
-curl -N http://localhost:9999      # -N disables curl buffering
+curl -N http://localhost:9999/QGNABD   # -N disables curl buffering
 ```
 
-…or just open the URL in a browser.
+…or just open the URL in a browser for the log page.
 
 ## How it works
 
@@ -157,6 +178,7 @@ Open another terminal and `curl -N http://localhost:9999` to see the stream.
 
 ```bash
 go vet ./...        # static checks
+go test ./...       # unit tests
 go build ./...      # compile
 ```
 
@@ -164,9 +186,13 @@ go build ./...      # compile
 
 | File | Purpose |
 |------|---------|
-| `main.go` | flags, HTTP fan-out hub, command/pipe sources, startup banner |
+| `main.go` | flags, the fan-out hub + replay buffer, command/pipe sources |
+| `broker.go` | host/guest roles, port selection, HTTP routing, index, banner |
+| `ids.go` | unique stream id generation |
+| `state.go` | `~/piper-config.json` + `piper --list` |
 | `tunnels.go` | `Tunnel` interface + Tailscale / Cloudflare / ngrok providers |
-| `util.go` | TTY detection, listener helper |
+| `web/index.html` | the embedded browser log page (no third-party JS) |
+| `util.go` | TTY detection |
 | `.goreleaser.yaml` | release archives, checksums, Homebrew cask |
 
 ### Adding a tunnel provider

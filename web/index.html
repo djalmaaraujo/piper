@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>piper</title>
+  <style>
+    :root { --bg: #0f172a; --fg: #e6e8f0; --muted: #64748b; }
+    html, body { height: 100%; margin: 0; background: var(--bg); }
+    #log {
+      box-sizing: border-box;
+      height: 100%;
+      overflow-y: auto;
+      padding: 16px 18px 40px;
+      margin: 0;
+      color: var(--fg);
+      background: var(--bg);
+      font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      white-space: pre-wrap;
+      word-break: break-word;
+      -webkit-font-smoothing: antialiased;
+      /* scrollbar hidden, content still scrolls */
+      scrollbar-width: none;
+    }
+    #log::-webkit-scrollbar { display: none; }
+
+    #status {
+      position: fixed; top: 8px; right: 12px; z-index: 10;
+      font: 12px ui-monospace, monospace; color: var(--muted);
+      background: rgba(15,23,42,.7); padding: 2px 8px; border-radius: 6px;
+    }
+    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+           background: #22c55e; margin-right: 6px; vertical-align: middle; }
+    .dot.off { background: #ef4444; }
+    #status .sep { margin: 0 8px; color: #334155; }
+    #status .meta { color: #94a3b8; }
+
+    #brand { position: fixed; bottom: 12px; right: 12px; z-index: 10;
+             opacity: .4; transition: opacity .15s; }
+    #brand:hover { opacity: .9; }
+    #brand img { height: 48px; display: block; }
+  </style>
+</head>
+<body>
+  <div id="status"><span class="dot" id="dot"></span><span id="state">connecting…</span><span class="sep">·</span><span class="meta" id="pid">ID: --</span><span class="sep">·</span><span class="meta" id="since">started --</span></div>
+  <a id="brand" href="https://github.com/djalmaaraujo/piper" target="_blank" rel="noopener"
+     title="piper on GitHub">
+    <img alt="piper" src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTgwIiBoZWlnaHQ9IjE4MCIgdmlld0JveD0iMTAgMjAgMTgwIDE4MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IlBpcGVyIGljb24iPgogIDxkZWZzPgogICAgPGxpbmVhckdyYWRpZW50IGlkPSJwaXBlR3JhZCIgeDE9IjAiIHkxPSIwIiB4Mj0iMSIgeTI9IjEiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAlIiBzdG9wLWNvbG9yPSIjMjJkM2VlIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMTAwJSIgc3RvcC1jb2xvcj0iIzYzNjZmMSIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0iYmdHcmFkIiB4MT0iMCIgeTE9IjAiIHgyPSIxIiB5Mj0iMSI+CiAgICAgIDxzdG9wIG9mZnNldD0iMCUiIHN0b3AtY29sb3I9IiMwZjE3MmEiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxMDAlIiBzdG9wLWNvbG9yPSIjMWUxYjRiIi8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogIDwvZGVmcz4KCiAgPHJlY3QgeD0iMjAiIHk9IjMwIiB3aWR0aD0iMTYwIiBoZWlnaHQ9IjE2MCIgcng9IjI4IiBmaWxsPSJ1cmwoI2JnR3JhZCkiIHN0cm9rZT0idXJsKCNwaXBlR3JhZCkiIHN0cm9rZS13aWR0aD0iNCIvPgoKICA8IS0tIHByb21wdCBjaGV2cm9uIC0tPgogIDxwYXRoIGQ9Ik01OCA4NiBMODYgMTEwIEw1OCAxMzQiIHN0cm9rZT0idXJsKCNwaXBlR3JhZCkiIHN0cm9rZS13aWR0aD0iMTEiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgZmlsbD0ibm9uZSIvPgoKICA8IS0tIHN0cmVhbWluZyBwaXBlOiB2ZXJ0aWNhbCBiYXIgd2l0aCBmbG93aW5nIGRvdHMgLS0+CiAgPHJlY3QgeD0iMTA0IiB5PSI4NCIgd2lkdGg9IjEyIiBoZWlnaHQ9IjUyIiByeD0iNiIgZmlsbD0idXJsKCNwaXBlR3JhZCkiLz4KICA8Y2lyY2xlIGN4PSIxMzIiIGN5PSIxMTAiIHI9IjciIGZpbGw9IiMyMmQzZWUiLz4KICA8Y2lyY2xlIGN4PSIxNTAiIGN5PSIxMTAiIHI9IjUiIGZpbGw9IiMzOGJkZjgiIG9wYWNpdHk9IjAuNyIvPgogIDxjaXJjbGUgY3g9IjE2NCIgY3k9IjExMCIgcj0iMy41IiBmaWxsPSIjNjM2NmYxIiBvcGFjaXR5PSIwLjUiLz4KPC9zdmc+Cg==">
+  </a>
+
+  <pre id="log"></pre>
+
+  <script>
+    const log = document.getElementById("log");
+    const dot = document.getElementById("dot");
+    const stateEl = document.getElementById("state");
+    const setState = (ok, txt) => { dot.classList.toggle("off", !ok); stateEl.textContent = txt; };
+
+    // Strip terminal control sequences — keep it plain & dependency-free:
+    // CSI (colors, cursor), OSC (titles), lone ESC, BEL/EOT, and carriage returns.
+    const CSI = /\x1b\[[0-?]*[ -/]*[@-~]/g;
+    const OSC = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
+    const OTHER = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g; // controls except \t(09) \n(0a)
+    const clean = (s) => s.replace(OSC, "").replace(CSI, "").replace(/\r/g, "").replace(OTHER, "");
+
+    function atBottom() {
+      return log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+    }
+
+    function append(text) {
+      const stick = atBottom();
+      log.appendChild(document.createTextNode(text));
+      // cap DOM size so very long streams don't grow memory unbounded
+      while (log.childNodes.length > 4000) log.removeChild(log.firstChild);
+      if (stick) log.scrollTop = log.scrollHeight;
+    }
+
+    // This page is served at /<id>; stream lives at /<id>/stream, metadata at /<id>/info.
+    const base = location.pathname.replace(/\/+$/, "");
+
+    async function loadInfo() {
+      try {
+        const r = await fetch(base + "/info");
+        if (!r.ok) return;
+        const j = await r.json();
+        if (j.id) {
+          document.getElementById("pid").textContent = "ID: " + j.id;
+          document.title = "piper · " + j.id;
+        }
+        if (j.started) document.getElementById("since").textContent = "started " + j.started;
+      } catch (_) { /* ignore */ }
+    }
+    loadInfo();
+
+    async function connect() {
+      try {
+        const res = await fetch(base + "/stream", { headers: { Accept: "text/plain" } });
+        if (!res.ok || !res.body) throw new Error("bad response");
+        setState(true, "connected");
+        const reader = res.body.getReader();
+        const dec = new TextDecoder();
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          append(clean(dec.decode(value, { stream: true })));
+        }
+      } catch (_) { /* retry */ }
+      setState(false, "disconnected — retrying");
+      setTimeout(connect, 1000);
+    }
+    connect();
+  </script>
+</body>
+</html>
