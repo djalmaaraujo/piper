@@ -16,6 +16,10 @@
 
 ---
 
+<p align="center">
+  <img src="assets/demo.gif" alt="piper screen demo — sharing a window live in the browser" width="900">
+</p>
+
 ## What it does
 
 You run a command. Piper runs it for you, prints the output to your terminal exactly as normal — **and** serves that same output, live, over HTTP. Anyone you share the URL with sees it stream in real time.
@@ -35,6 +39,10 @@ piper npm run build
 ```
 
 Now `curl -N http://100.x.y.z:9999/QGNABD` from another machine (or open it in a browser) and watch the build scroll by.
+
+<p align="center">
+  <img src="assets/screenshot-logs.png" alt="piper log stream in the browser" width="640">
+</p>
 
 ## Features
 
