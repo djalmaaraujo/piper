@@ -43,8 +43,14 @@
 
   <script>
     const base = location.pathname.replace(/\/+$/, "");
-    // MJPEG multipart auto-refreshes the <img> with each new frame.
-    document.getElementById("shot").src = base + "/stream";
+    const shot = document.getElementById("shot");
+
+    // Optional client-side jitter buffer: ?buffer=<ms>. 0 = live (show each
+    // frame as it arrives). >0 = hold ~that many ms of frames and play them at
+    // a steady cadence, smoothing uneven arrival (e.g. over a tunnel). It can't
+    // raise the frame rate — only even out the timing. Catch-up drops old
+    // frames if the queue grows too deep, so latency stays bounded.
+    const bufferMs = Math.max(0, parseInt(new URLSearchParams(location.search).get("buffer") || "0", 10) || 0);
 
     (async function loadInfo() {
       try {
@@ -55,6 +61,83 @@
         if (j.started) document.getElementById("since").textContent = "started " + j.started;
       } catch (_) {}
     })();
+
+    function indexOf(buf, needle, from) {
+      outer: for (let i = from || 0; i <= buf.length - needle.length; i++) {
+        for (let j = 0; j < needle.length; j++) if (buf[i + j] !== needle[j]) continue outer;
+        return i;
+      }
+      return -1;
+    }
+    const BOUND = new TextEncoder().encode("--piperframe");
+    const CRLF2 = new TextEncoder().encode("\r\n\r\n");
+
+    const queue = [];          // object URLs waiting to be shown
+    let ema = 150;             // EMA of inter-frame arrival (ms)
+    let lastArrival = 0;
+
+    function show(url) {
+      const old = shot.src;
+      shot.src = url;
+      if (old.startsWith("blob:")) URL.revokeObjectURL(old);
+    }
+    function onFrame(jpeg) {
+      const url = URL.createObjectURL(new Blob([jpeg], { type: "image/jpeg" }));
+      const now = performance.now();
+      if (lastArrival) ema = 0.8 * ema + 0.2 * (now - lastArrival);
+      lastArrival = now;
+      queue.push(url);
+      if (bufferMs <= 0) drain(1);                 // live
+      const cap = Math.max(60, Math.round((bufferMs / Math.max(ema, 1)) * 3));
+      while (queue.length > cap) URL.revokeObjectURL(queue.shift());
+    }
+    function drain(n) { for (let i = 0; i < n && queue.length; i++) show(queue.shift()); }
+
+    // Steady-cadence player for buffered mode.
+    function tick() {
+      const target = Math.max(1, Math.round(bufferMs / Math.max(ema, 1)));
+      if (queue.length >= target) {
+        while (queue.length > target * 2) URL.revokeObjectURL(queue.shift()); // catch up
+        drain(1);
+      }
+      setTimeout(tick, Math.max(ema, 30));
+    }
+    if (bufferMs > 0) tick();
+
+    // Parse the multipart MJPEG stream frame by frame.
+    async function play() {
+      let buf = new Uint8Array(0);
+      const dec = new TextDecoder();
+      try {
+        const res = await fetch(base + "/stream");
+        if (!res.ok || !res.body) throw new Error("bad stream");
+        const reader = res.body.getReader();
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          const next = new Uint8Array(buf.length + value.length);
+          next.set(buf); next.set(value, buf.length); buf = next;
+          for (;;) {
+            const b = indexOf(buf, BOUND, 0);
+            if (b < 0) break;
+            const h = indexOf(buf, CRLF2, b);
+            if (h < 0) break;
+            const m = dec.decode(buf.subarray(b, h)).match(/Content-Length:\s*(\d+)/i);
+            if (!m) { buf = buf.subarray(h + 4); continue; }
+            const len = +m[1], start = h + 4;
+            if (buf.length < start + len) break;     // wait for the whole frame
+            onFrame(buf.subarray(start, start + len));
+            buf = buf.subarray(start + len);
+          }
+        }
+      } catch (_) {
+        // Fallback: let the browser's native MJPEG handling drive the <img>.
+        shot.src = base + "/stream";
+        return;
+      }
+      setTimeout(play, 1000); // reconnect if the stream ends
+    }
+    play();
   </script>
 </body>
 </html>

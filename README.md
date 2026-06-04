@@ -130,6 +130,7 @@ Run with no name and piper pops a **native window picker** (a macOS list dialog)
 - It's a frame stream, not smooth video — great for "watch what's happening", not 60 fps motion.
 - **Disk stays bounded**: frames use one temp file, overwritten each tick and deleted right after it's read (and on exit) — nothing accumulates.
 - Sharing the window you're *watching* in just produces a harmless infinity-mirror effect; resource use is fixed at the capture rate, no feedback loop.
+- **Smoother over a tunnel:** add `?buffer=<ms>` to the page URL (e.g. `…/<id>?buffer=600`) for a client-side jitter buffer — it holds ~that many ms of frames and plays them at a steady cadence (with catch-up), evening out uneven arrival. It trades a little latency for smoothness; it can't raise the frame rate. Default `0` plays live.
 
 ### Public sharing
 
