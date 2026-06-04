@@ -45,12 +45,13 @@
     const base = location.pathname.replace(/\/+$/, "");
     const shot = document.getElementById("shot");
 
-    // Optional client-side jitter buffer: ?buffer=<ms>. 0 = live (show each
-    // frame as it arrives). >0 = hold ~that many ms of frames and play them at
-    // a steady cadence, smoothing uneven arrival (e.g. over a tunnel). It can't
-    // raise the frame rate — only even out the timing. Catch-up drops old
-    // frames if the queue grows too deep, so latency stays bounded.
-    const bufferMs = Math.max(0, parseInt(new URLSearchParams(location.search).get("buffer") || "0", 10) || 0);
+    // Client-side jitter buffer: holds a little playback so uneven frame
+    // arrival (e.g. over a tunnel) plays at a steady cadence with catch-up.
+    // It can't raise the frame rate — only even out the timing. A sensible
+    // default is baked in; override with ?buffer=<ms> (and ?buffer=0 = live).
+    const DEFAULT_BUFFER_MS = 400;
+    const bufQ = new URLSearchParams(location.search).get("buffer");
+    const bufferMs = bufQ === null ? DEFAULT_BUFFER_MS : Math.max(0, parseInt(bufQ, 10) || 0);
 
     (async function loadInfo() {
       try {
