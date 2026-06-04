@@ -75,8 +75,22 @@
       if (stick) log.scrollTop = log.scrollHeight;
     }
 
-    // This page is served at /<id>; stream lives at /<id>/stream.
+    // This page is served at /<id>; stream lives at /<id>/stream, metadata at /<id>/info.
     const base = location.pathname.replace(/\/+$/, "");
+
+    async function loadInfo() {
+      try {
+        const r = await fetch(base + "/info");
+        if (!r.ok) return;
+        const j = await r.json();
+        if (j.id) {
+          document.getElementById("pid").textContent = "ID: " + j.id;
+          document.title = "piper · " + j.id;
+        }
+        if (j.started) document.getElementById("since").textContent = "started " + j.started;
+      } catch (_) { /* ignore */ }
+    }
+    loadInfo();
 
     async function connect() {
       try {

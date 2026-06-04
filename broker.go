@@ -247,18 +247,18 @@ func (rg *registry) serveBrokenPipe(w http.ResponseWriter, r *http.Request, id s
 // ---------------------------------------------------------------------------
 // roles
 
-// publish keeps this piper reachable on the shared port for its whole life.
+// publish keeps this piper reachable on a shared port for its whole life.
 func publish(cfg *config, id string, h *hub) {
 	for {
-		ln, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", cfg.port))
-		if err == nil {
-			becomeHost(ln, cfg, id, h) // blocks until the process exits
-			return
-		}
 		if h.isClosed() {
 			return // our source already ended; nothing to publish
 		}
-		if gerr := becomeGuest(cfg, id, h); gerr == nil {
+		port, ln := claimPort(cfg.port)
+		if ln != nil {
+			becomeHost(ln, cfg, port, id, h) // blocks until the process exits
+			return
+		}
+		if gerr := becomeGuest(cfg, port, id, h); gerr == nil {
 			return // our stream ended cleanly
 		}
 		if h.isClosed() {
@@ -266,6 +266,42 @@ func publish(cfg *config, id string, h *hub) {
 		}
 		time.Sleep(300 * time.Millisecond) // host vanished; loop may promote us
 	}
+}
+
+// claimPort scans upward from start to find the port piper should use.
+//   - bindable           => we become the host (returns the listener)
+//   - held by a piper     => we join it as a guest (returns nil listener)
+//   - held by something else => skipped, so we stay out of its way
+//
+// Every piper scans the same sequence, so they all converge on the same port
+// even when the default is taken by an unrelated process.
+func claimPort(start int) (int, net.Listener) {
+	const span = 64
+	for p := start; p < start+span; p++ {
+		if p < 1 || p > 65535 {
+			break
+		}
+		ln, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", p))
+		if err == nil {
+			return p, ln // free — host here
+		}
+		if piperHostAt(p) {
+			return p, nil // a piper already owns this port — join as guest
+		}
+		// occupied by a non-piper process: try the next port
+	}
+	return start, nil // give up scanning; try to attach at the default
+}
+
+// piperHostAt reports whether a piper host is listening on port p, by probing
+// its local control socket (network processes can't fake this).
+func piperHostAt(p int) bool {
+	c, err := net.DialTimeout("unix", socketPath(p), 200*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	c.Close()
+	return true
 }
 
 // socketPath is the host's local control socket for this port. It lives in the
@@ -279,8 +315,8 @@ func socketPath(port int) string {
 	return filepath.Join(home, fmt.Sprintf(".piper-%d.sock", port))
 }
 
-func becomeHost(ln net.Listener, cfg *config, id string, h *hub) {
-	rg := newRegistry(cfg.port)
+func becomeHost(ln net.Listener, cfg *config, port int, id string, h *hub) {
+	rg := newRegistry(port)
 	rg.add(&stream{
 		id: id, cmd: cmdLabel(cfg), pid: os.Getpid(), role: "host",
 		started: nowStamp(), hub: h,
@@ -288,7 +324,7 @@ func becomeHost(ln net.Listener, cfg *config, id string, h *hub) {
 
 	// Local unix socket for guests. Winning the TCP bind makes us the authority,
 	// so it's safe to clear a stale socket file left by a previous host.
-	sp := socketPath(cfg.port)
+	sp := socketPath(port)
 	os.Remove(sp)
 	if ul, err := net.Listen("unix", sp); err == nil {
 		os.Chmod(sp, 0o600)
@@ -299,14 +335,14 @@ func becomeHost(ln net.Listener, cfg *config, id string, h *hub) {
 		defer func() { ul.Close(); os.Remove(sp) }()
 	}
 
-	tunnelURL := startTunnelOnce(cfg)
-	printBanner(cfg, id, "host", tunnelURL)
+	tunnelURL := startTunnelOnce(cfg, port)
+	printBanner(port, id, "host", tunnelURL)
 	srv := &http.Server{Handler: rg}
 	_ = srv.Serve(ln)
 }
 
-func becomeGuest(cfg *config, id string, h *hub) error {
-	conn, err := net.Dial("unix", socketPath(cfg.port))
+func becomeGuest(cfg *config, port int, id string, h *hub) error {
+	conn, err := net.Dial("unix", socketPath(port))
 	if err != nil {
 		return err // host not reachable (maybe just died) — caller may promote us
 	}
@@ -319,8 +355,8 @@ func becomeGuest(cfg *config, id string, h *hub) error {
 		return err
 	}
 
-	tunnelURL := startTunnelOnce(cfg)
-	printBanner(cfg, id, "guest", tunnelURL)
+	tunnelURL := startTunnelOnce(cfg, port)
+	printBanner(port, id, "guest", tunnelURL)
 
 	ch, snap := h.register()
 	defer h.unregister(ch)
@@ -359,7 +395,7 @@ var (
 	hostSock string // unix socket path we created as host, if any
 )
 
-func startTunnelOnce(cfg *config) string {
+func startTunnelOnce(cfg *config, port int) string {
 	if !cfg.public {
 		return ""
 	}
@@ -368,7 +404,7 @@ func startTunnelOnce(cfg *config) string {
 	if activeTunnel != nil {
 		return activeTunnelURL
 	}
-	t, u, err := startTunnel(cfg.provider, cfg.port)
+	t, u, err := startTunnel(cfg.provider, port)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  Public:    (failed: %v)\n", err)
 		return ""
@@ -404,8 +440,7 @@ func cleanup() {
 // ---------------------------------------------------------------------------
 // banner
 
-func printBanner(cfg *config, id, role, tunnelURL string) {
-	port := cfg.port
+func printBanner(port int, id, role, tunnelURL string) {
 	base := fmt.Sprintf("http://localhost:%d", port)
 	tsIP := tailscaleIP()
 	w := os.Stderr

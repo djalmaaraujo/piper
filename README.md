@@ -92,7 +92,7 @@ curl -N http://localhost:9999/USHS82  # raw stream
 http://localhost:9999/                # index of everything running
 ```
 
-The first piper to start owns the HTTP server (the "host"); later ones attach to it and push their output over loopback. If the host exits, another instance takes over the port automatically. Running pipers are tracked in `~/piper-config.json`; hitting an id that isn't running returns a friendly *broken pipe* page.
+The first piper to start owns the HTTP server (the "host"); later ones attach to it and push their output over a local unix socket. If the host exits, another instance takes over automatically. The default port is `9999`, but if something else is already using it piper quietly tries the next free port (and other pipers find it there). Running pipers are tracked in `~/piper-config.json`; hitting an id that isn't running returns a friendly *broken pipe* page.
 
 ### Public sharing
 
