@@ -1,0 +1,69 @@
+version: 2
+project_name: piper
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: piper
+    binary: piper
+    main: .
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-dev"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+homebrew_casks:
+  - name: piper
+    repository:
+      owner: djalmaaraujo
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: "https://github.com/djalmaaraujo/piper"
+    description: "Stream any command's output live over HTTP"
+    commit_author:
+      name: goreleaser-bot
+      email: bot@goreleaser.com
+    # Remove the quarantine xattr so Gatekeeper doesn't block the unsigned binary.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/piper"]
+          end
+
+release:
+  github:
+    owner: djalmaaraujo
+    name: piper
+  prerelease: auto

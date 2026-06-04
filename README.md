@@ -4,12 +4,12 @@
 
 <p align="center">
   <strong>Stream any command's output live over HTTP.</strong><br>
-  Watch a long build, a deploy, or a test run from a browser or <code>curl</code> — on your LAN, or the public internet via Tailscale.
+  Watch a long build, a deploy, or a test run from a browser or <code>curl</code> — on your LAN, or the public internet via Tailscale, Cloudflare, or ngrok.
 </p>
 
 <p align="center">
   <a href="#install"><img src="https://img.shields.io/badge/install-one%20command-22d3ee?style=flat-square" alt="install"></a>
-  <img src="https://img.shields.io/badge/node-%3E%3D16-6366f1?style=flat-square" alt="node >= 16">
+  <img src="https://img.shields.io/badge/single-binary-6366f1?style=flat-square" alt="single binary">
   <img src="https://img.shields.io/badge/dependencies-zero-38bdf8?style=flat-square" alt="zero dependencies">
   <img src="https://img.shields.io/badge/license-MIT-94a3b8?style=flat-square" alt="MIT license">
 </p>
@@ -36,57 +36,60 @@ Now `curl -N http://localhost:9999` from another machine (or open it in a browse
 
 ## Features
 
+- **Single static binary** — written in Go, zero runtime dependencies. No Node, no Python, nothing to install alongside it.
 - **Stream live output** — every line of stdout/stderr is broadcast to all connected viewers as it happens.
 - **Real TTY, no buffering** — runs your command under `script(1)` so colors and progress bars render and output isn't stuck in a pipe buffer.
-- **Zero dependencies** — one ~5 KB Node file. Nothing to `npm install`.
 - **Two modes** — run a command directly (`piper <cmd>`) or pipe into it (`somecmd | piper`).
-- **Multiple viewers** — connect as many curl/browser clients as you want; each gets the live feed.
+- **Multiple viewers** — connect as many curl/browser clients as you want; slow clients are dropped instead of stalling everyone.
 - **Replay buffer** — late joiners immediately get the last 100 lines, then keep streaming.
+- **Pluggable public sharing** — `--public` auto-detects an installed tunnel; or force one with `--tailscale`, `--cloudflared`, or `--ngrok`.
 - **LAN sharing out of the box** — auto-detects your Tailscale IP and prints a ready-to-share URL.
-- **Public sharing** — `--public` exposes the stream to the internet via Tailscale Funnel.
 - **Health check** — `GET /health` returns `ok` for uptime probes.
 - **Custom port** — `--port 8080` or `PORT=8080`.
 
 ## Install
 
-One command:
+### Homebrew (macOS & Linux)
+
+```bash
+brew install djalmaaraujo/tap/piper
+```
+
+### One-command script
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/djalmaaraujo/piper/main/install.sh | bash
 ```
 
-This drops a `piper` executable into `/usr/local/bin` (or `~/.local/bin` if that isn't writable).
+Downloads the right prebuilt binary for your OS/arch into `/usr/local/bin` (or `~/.local/bin`).
 
-<details>
-<summary>Other ways to install</summary>
+### Manual
 
-**Run without installing** (needs Node + npm):
-
-```bash
-npx github:djalmaaraujo/piper echo hello
-```
-
-**Manual:**
-
-```bash
-git clone https://github.com/djalmaaraujo/piper.git
-cd piper
-chmod +x stream.js
-ln -s "$PWD/stream.js" /usr/local/bin/piper
-```
-
-</details>
-
-**Requirements:** Node.js ≥ 16. For LAN/public sharing, [Tailscale](https://tailscale.com) installed and logged in.
+Grab a binary from the [Releases page](https://github.com/djalmaaraujo/piper/releases), extract, and put `piper` on your `PATH`. Or build from source (see [Development](#development)).
 
 ## Usage
 
 ```bash
 piper <command>                 # run a command and stream its output
-piper --public <command>        # also expose publicly via Tailscale Funnel
+piper --public <command>        # also share publicly (auto-detect a tunnel)
+piper --tailscale <command>     # force Tailscale Funnel
+piper --cloudflared <command>   # force a Cloudflare quick tunnel (no account)
+piper --ngrok <command>         # force ngrok
 piper --port 8080 <command>     # listen on a custom port
 <command> | piper               # pipe mode (reads stdin)
 ```
+
+### Public sharing
+
+`--public` picks the first tunnel it finds installed, in this order: **Tailscale → Cloudflare → ngrok**. Pin a specific one with its flag.
+
+| Provider | Flag | Setup |
+|----------|------|-------|
+| Tailscale Funnel | `--tailscale` | [Tailscale](https://tailscale.com) installed + logged in, Funnel enabled for your tailnet |
+| Cloudflare | `--cloudflared` | [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) installed — **quick tunnels need no account** |
+| ngrok | `--ngrok` | [`ngrok`](https://ngrok.com) installed + `ngrok config add-authtoken <token>` once |
+
+> **Heads-up:** `--public` exposes your command's output to the internet. Don't stream logs that contain secrets.
 
 ### Examples
 
@@ -94,8 +97,8 @@ piper --port 8080 <command>     # listen on a custom port
 # Watch a build from your phone on the same Tailnet
 piper npm run build
 
-# Share a deploy log with a teammate over the internet
-piper --public ./deploy.sh
+# Share a deploy log with a teammate, no account needed
+piper --cloudflared ./deploy.sh
 
 # Stream an existing log file
 tail -f /var/log/app.log | piper
@@ -123,47 +126,76 @@ curl -N http://localhost:9999      # -N disables curl buffering
               │                      └──► ring buffer (last 100 lines)
               └──────────────────────────────┘
                          │
-                  Tailscale Funnel (with --public)
+              tunnel provider (with --public):
+              Tailscale Funnel · Cloudflare · ngrok
 ```
 
-Piper launches your command inside a pseudo-terminal via `script(1)` so programs behave as if attached to a real terminal (colors, unbuffered output). Each chunk of output is written to your own stdout, pushed to every connected HTTP client, and appended to a 100-line ring buffer so new viewers get recent context immediately.
+Piper launches your command inside a pseudo-terminal via `script(1)` so programs behave as if attached to a real terminal (colors, unbuffered output). Each chunk of output is written to your own stdout, fanned out to every connected HTTP client, and appended to a 100-line ring buffer so new viewers get recent context immediately.
+
+## Platform support
+
+| | Command mode (`piper <cmd>`) | Pipe mode (`cmd \| piper`) | Viewing |
+|--|--|--|--|
+| **macOS** | ✅ | ✅ | ✅ |
+| **Linux** | ✅ | ✅ | ✅ |
+| **Windows** | ❌ (needs `script(1)` — use [WSL](https://learn.microsoft.com/windows/wsl/)) | ✅ | ✅ |
+
+Command mode relies on the `script(1)` utility (built in on macOS and Linux). On Windows, pipe a command's output into piper, or run it under WSL.
 
 ## Development
 
-It's a single file — `stream.js` — with no build step and no dependencies.
+Pure Go, standard library only — no third-party modules.
 
 ```bash
 git clone https://github.com/djalmaaraujo/piper.git
 cd piper
-node stream.js echo "hello from piper"
+go build -o piper .
+./piper echo "hello from piper"
 ```
 
 Open another terminal and `curl -N http://localhost:9999` to see the stream.
 
+```bash
+go vet ./...        # static checks
+go build ./...      # compile
+```
+
+### Project layout
+
+| File | Purpose |
+|------|---------|
+| `main.go` | flags, HTTP fan-out hub, command/pipe sources, startup banner |
+| `tunnels.go` | `Tunnel` interface + Tailscale / Cloudflare / ngrok providers |
+| `util.go` | TTY detection, listener helper |
+| `.goreleaser.yaml` | release archives, checksums, Homebrew cask |
+
+### Adding a tunnel provider
+
+Implement the `Tunnel` interface in `tunnels.go` (`Name`, `Available`, `Start`, `Stop`) and add it to the list in `startTunnel`. Each provider just shells out to its CLI and reports the public URL.
+
 ### Contributing
 
-1. Fork the repo and create a branch: `git checkout -b my-change`.
-2. Make your change in `stream.js`. Keep it dependency-free.
-3. Test both modes manually:
+1. Fork and branch: `git checkout -b my-change`.
+2. Keep it dependency-free (standard library only).
+3. Test both modes:
    ```bash
-   node stream.js bash -c 'for i in 1 2 3; do echo line $i; sleep 1; done'
+   go run . bash -c 'for i in 1 2 3; do echo line $i; sleep 1; done'
    # in another shell:
    curl -N http://localhost:9999
    ```
-   And pipe mode:
-   ```bash
-   printf 'a\nb\nc\n' | node stream.js
-   ```
-4. Verify `--port`, `--public` (if you have Tailscale), and `/health`.
+4. Run `go vet ./...` and confirm cross-compilation: `GOOS=linux go build -o /dev/null .`
 5. Open a pull request describing what changed and why.
 
-**Style:** match the existing code — plain Node core modules, no transpiler, small and readable.
+### Releasing
 
-## Platform notes
+Releases are cut by [GoReleaser](https://goreleaser.com) on a tag:
 
-- **macOS / Linux** — supported. Piper picks the right `script(1)` invocation per platform.
-- **Windows** — not supported (no `script(1)`); use WSL.
-- **Public mode** requires Tailscale with Funnel enabled for your tailnet.
+```bash
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+CI builds binaries for macOS/Linux/Windows (amd64 + arm64), publishes a GitHub Release, and updates the Homebrew cask in [`djalmaaraujo/homebrew-tap`](https://github.com/djalmaaraujo/homebrew-tap). The tap update needs a `HOMEBREW_TAP_GITHUB_TOKEN` repo secret (a PAT with `repo` scope on the tap).
 
 ## License
 
