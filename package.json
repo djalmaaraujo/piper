@@ -1,0 +1,37 @@
+{
+  "name": "piper-stream",
+  "version": "1.0.0",
+  "description": "Stream any command's output live over HTTP — watch your terminal from a browser or curl, on your LAN or the public internet via Tailscale.",
+  "bin": {
+    "piper": "stream.js"
+  },
+  "files": [
+    "stream.js"
+  ],
+  "scripts": {
+    "start": "node stream.js"
+  },
+  "keywords": [
+    "stream",
+    "cli",
+    "http",
+    "terminal",
+    "tailscale",
+    "logs",
+    "tail",
+    "share"
+  ],
+  "author": "Djalma Araújo",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/djalmaaraujo/piper.git"
+  },
+  "bugs": {
+    "url": "https://github.com/djalmaaraujo/piper/issues"
+  },
+  "homepage": "https://github.com/djalmaaraujo/piper#readme",
+  "engines": {
+    "node": ">=16"
+  }
+}

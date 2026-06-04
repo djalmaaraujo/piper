@@ -1,0 +1,30 @@
+<svg width="640" height="220" viewBox="0 0 640 220" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Piper logo">
+  <defs>
+    <linearGradient id="pipeGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#22d3ee"/>
+      <stop offset="100%" stop-color="#6366f1"/>
+    </linearGradient>
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#1e1b4b"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Terminal mark -->
+  <rect x="20" y="30" width="160" height="160" rx="28" fill="url(#bgGrad)" stroke="url(#pipeGrad)" stroke-width="4"/>
+
+  <!-- prompt chevron -->
+  <path d="M58 86 L86 110 L58 134" stroke="url(#pipeGrad)" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+
+  <!-- streaming pipe: a vertical bar with flowing dots -->
+  <rect x="104" y="84" width="12" height="52" rx="6" fill="url(#pipeGrad)"/>
+  <circle cx="132" cy="110" r="7" fill="#22d3ee"/>
+  <circle cx="150" cy="110" r="5" fill="#38bdf8" opacity="0.7"/>
+  <circle cx="164" cy="110" r="3.5" fill="#6366f1" opacity="0.5"/>
+
+  <!-- Wordmark -->
+  <text x="210" y="128" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="74" font-weight="700" fill="#e2e8f0">piper</text>
+
+  <!-- Tagline -->
+  <text x="214" y="162" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19" fill="#94a3b8">stream any command, live</text>
+</svg>
