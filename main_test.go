@@ -196,7 +196,7 @@ func TestHTTPRouting(t *testing.T) {
 		}
 	})
 
-	t.Run("browser gets HTML terminal", func(t *testing.T) {
+	t.Run("browser gets HTML page", func(t *testing.T) {
 		req, _ := http.NewRequest("GET", srv.URL+"/", nil)
 		req.Header.Set("Accept", "text/html")
 		resp, err := http.DefaultClient.Do(req)
@@ -208,23 +208,12 @@ func TestHTTPRouting(t *testing.T) {
 			t.Errorf("content-type = %q", ct)
 		}
 		body, _ := io.ReadAll(resp.Body)
-		if !strings.Contains(string(body), "new Terminal(") {
-			t.Error("HTML should contain the xterm bootstrap")
+		// no third-party JS: the page is a plain fetch loop into <pre id="log">
+		if !strings.Contains(string(body), `id="log"`) {
+			t.Error("HTML should contain the log element")
 		}
-	})
-
-	t.Run("xterm.js asset", func(t *testing.T) {
-		resp, err := http.Get(srv.URL + "/xterm.js")
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "javascript") {
-			t.Errorf("content-type = %q", ct)
-		}
-		body, _ := io.ReadAll(resp.Body)
-		if len(body) < 1000 {
-			t.Errorf("xterm.js too small: %d bytes", len(body))
+		if strings.Contains(string(body), "xterm") {
+			t.Error("HTML must not reference xterm (dependency removed)")
 		}
 	})
 

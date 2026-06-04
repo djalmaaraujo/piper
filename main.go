@@ -252,12 +252,7 @@ func (h *hub) handler() http.Handler {
 		io.WriteString(w, "ok")
 	})
 
-	// Browser UI assets (vendored xterm.js, embedded in the binary).
-	mux.HandleFunc("/xterm.js", serveAsset("web/xterm.js", "application/javascript"))
-	mux.HandleFunc("/xterm.css", serveAsset("web/xterm.css", "text/css"))
-	mux.HandleFunc("/xterm-addon-fit.js", serveAsset("web/xterm-addon-fit.js", "application/javascript"))
-
-	// Raw live stream — what curl and the browser terminal both read.
+	// Raw live stream — what curl and the browser page both read.
 	mux.HandleFunc("/stream", h.streamHandler)
 
 	// Root: serve the terminal UI to browsers, raw stream to curl & friends.

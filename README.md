@@ -37,6 +37,7 @@ Now `curl -N http://localhost:9999` from another machine (or open it in a browse
 ## Features
 
 - **Single static binary** — written in Go, zero runtime dependencies. No Node, no Python, nothing to install alongside it.
+- **Browser view** — open the URL in a browser for a dark, auto-scrolling log page (a tiny dependency-free HTML page embedded in the binary). `curl` still gets the raw stream.
 - **Stream live output** — every line of stdout/stderr is broadcast to all connected viewers as it happens.
 - **Real TTY, no buffering** — runs your command under `script(1)` so colors and progress bars render and output isn't stuck in a pipe buffer.
 - **Two modes** — run a command directly (`piper <cmd>`) or pipe into it (`somecmd | piper`).

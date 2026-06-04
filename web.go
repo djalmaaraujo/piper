@@ -6,11 +6,11 @@ import (
 	"strings"
 )
 
-// webFS holds the browser UI: a single page plus vendored xterm.js assets.
-// Embedded at build time, so the binary stays self-contained and works
-// offline. embed is part of the standard library — no Go dependencies.
+// webFS holds the browser UI: a single self-contained HTML page (no JS
+// libraries — just a fetch loop into a <pre>). Embedded at build time, so the
+// binary stays self-contained. embed is standard library — no Go dependencies.
 //
-//go:embed web/index.html web/xterm.js web/xterm.css web/xterm-addon-fit.js
+//go:embed web/index.html
 var webFS embed.FS
 
 // wantsHTML reports whether the request looks like a browser (vs curl).
