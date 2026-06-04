@@ -123,12 +123,6 @@ func (c *config) kind() string {
 func parseArgs(argv []string) (*config, error) {
 	c := &config{port: defaultPort, fps: 5, scale: 1280}
 
-	// `piper screen ...` is a subcommand: share a window instead of a command.
-	if len(argv) > 0 && argv[0] == "screen" {
-		c.screen = true
-		argv = argv[1:]
-	}
-
 	if env := os.Getenv("PORT"); env != "" {
 		p, err := strconv.Atoi(env)
 		if err != nil {
@@ -198,6 +192,13 @@ func parseArgs(argv []string) (*config, error) {
 
 	if c.port < 1 || c.port > 65535 {
 		return nil, fmt.Errorf("port out of range: %d", c.port)
+	}
+
+	// `screen` is a subcommand: the first non-flag word, in any flag order
+	// (e.g. `piper --tailscale screen "Chrome"`).
+	if len(rest) > 0 && rest[0] == "screen" {
+		c.screen = true
+		rest = rest[1:]
 	}
 
 	c.command = rest

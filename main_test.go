@@ -95,6 +95,32 @@ func TestParseArgs(t *testing.T) {
 		}
 	})
 
+	t.Run("screen subcommand in any flag order", func(t *testing.T) {
+		for _, argv := range [][]string{
+			{"screen", "Chrome"},
+			{"--tailscale", "screen", "Chrome"},
+			{"--manager", "--fps", "10", "screen", "Chrome"},
+		} {
+			c, err := parseArgs(argv)
+			if err != nil {
+				t.Fatalf("%v: %v", argv, err)
+			}
+			if !c.screen {
+				t.Errorf("%v: screen not detected", argv)
+			}
+			if c.screenQuery != "Chrome" {
+				t.Errorf("%v: query = %q, want Chrome", argv, c.screenQuery)
+			}
+		}
+	})
+
+	t.Run("screen with no name (picker)", func(t *testing.T) {
+		c, _ := parseArgs([]string{"--public", "screen"})
+		if !c.screen || c.screenQuery != "" || !c.public {
+			t.Errorf("screen=%v query=%q public=%v", c.screen, c.screenQuery, c.public)
+		}
+	})
+
 	t.Run("no command is pipe mode", func(t *testing.T) {
 		c, err := parseArgs(nil)
 		if err != nil {
