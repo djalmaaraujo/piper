@@ -251,40 +251,60 @@ func (h *hub) handler() http.Handler {
 		w.WriteHeader(http.StatusOK)
 		io.WriteString(w, "ok")
 	})
+
+	// Browser UI assets (vendored xterm.js, embedded in the binary).
+	mux.HandleFunc("/xterm.js", serveAsset("web/xterm.js", "application/javascript"))
+	mux.HandleFunc("/xterm.css", serveAsset("web/xterm.css", "text/css"))
+	mux.HandleFunc("/xterm-addon-fit.js", serveAsset("web/xterm-addon-fit.js", "application/javascript"))
+
+	// Raw live stream — what curl and the browser terminal both read.
+	mux.HandleFunc("/stream", h.streamHandler)
+
+	// Root: serve the terminal UI to browsers, raw stream to curl & friends.
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		flusher, ok := w.(http.Flusher)
-		if !ok {
-			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		if r.URL.Path == "/" && wantsHTML(r) {
+			serveAsset("web/index.html", "text/html; charset=utf-8")(w, r)
 			return
 		}
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.WriteHeader(http.StatusOK)
-
-		ch, snap := h.register()
-		defer h.unregister(ch)
-
-		if len(snap) > 0 {
-			w.Write(snap)
-			flusher.Flush()
-		}
-
-		for {
-			select {
-			case <-r.Context().Done():
-				return
-			case chunk, open := <-ch:
-				if !open {
-					return
-				}
-				if _, err := w.Write(chunk); err != nil {
-					return
-				}
-				flusher.Flush()
-			}
-		}
+		h.streamHandler(w, r)
 	})
 	return mux
+}
+
+// streamHandler streams the replay buffer followed by live output as
+// chunked text/plain, until the client disconnects or the source ends.
+func (h *hub) streamHandler(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(http.StatusOK)
+
+	ch, snap := h.register()
+	defer h.unregister(ch)
+
+	if len(snap) > 0 {
+		w.Write(snap)
+		flusher.Flush()
+	}
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case chunk, open := <-ch:
+			if !open {
+				return
+			}
+			if _, err := w.Write(chunk); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -402,7 +422,8 @@ func printBanner(cfg *config, tunnel *Tunnel) {
 		} else {
 			*tunnel = t
 			fmt.Fprintf(os.Stderr, "  Public:    %s\n", url)
-			fmt.Fprintf(os.Stderr, "\n  Viewers:   curl -N %s\n\n", url)
+			fmt.Fprintf(os.Stderr, "\n  Terminal:  open %s in a browser\n", url)
+			fmt.Fprintf(os.Stderr, "  Viewers:   curl -N %s\n\n", url)
 			return
 		}
 	}
@@ -411,7 +432,8 @@ func printBanner(cfg *config, tunnel *Tunnel) {
 	if tsIP != "" {
 		viewer = fmt.Sprintf("http://%s:%d", tsIP, cfg.port)
 	}
-	fmt.Fprintf(os.Stderr, "\n  Viewers:   curl -N %s\n\n", viewer)
+	fmt.Fprintf(os.Stderr, "\n  Terminal:  open %s in a browser\n", viewer)
+	fmt.Fprintf(os.Stderr, "  Viewers:   curl -N %s\n\n", viewer)
 }
 
 func tailscaleIP() string {
