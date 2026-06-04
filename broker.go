@@ -24,13 +24,17 @@ import (
 //
 // No background daemon: the "host" is simply the first piper's own process.
 
+// mjpegBoundary is the multipart boundary used for screen (MJPEG) streams.
+const mjpegBoundary = "piperframe"
+
 type stream struct {
 	id      string
 	cmd     string
 	pid     int
 	role    string // "host" or "guest"
 	started string
-	manager bool // this piper opted into exposing the web index
+	kind    string // "text" or "mjpeg"
+	manager bool   // this piper opted into exposing the web index
 	hub     *hub
 }
 
@@ -161,7 +165,11 @@ func (rg *registry) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		})
 	case len(parts) == 1:
 		if wantsHTML(r) {
-			serveAsset("web/index.html", "text/html; charset=utf-8")(w, r)
+			page := "web/index.html"
+			if st.kind == "mjpeg" {
+				page = "web/screen.html"
+			}
+			serveAsset(page, "text/html; charset=utf-8")(w, r)
 		} else {
 			st.hub.streamHandler(w, r)
 		}
@@ -178,6 +186,7 @@ type guestHeader struct {
 	PID     int    `json:"pid"`
 	Started string `json:"started"`
 	Manager bool   `json:"manager"`
+	Kind    string `json:"kind"`
 }
 
 // acceptGuests serves the host's unix socket: each connecting guest registers a
@@ -206,9 +215,16 @@ func handleGuestConn(conn net.Conn, rg *registry) {
 
 	hb := newHub(replayLines)
 	hb.echo = false // don't print a guest's output on the host's terminal
+	kind := hdr.Kind
+	if kind == "" {
+		kind = "text"
+	}
+	if kind == "mjpeg" {
+		hb.binary = true
+	}
 	st := &stream{
 		id: hdr.ID, cmd: hdr.Cmd, pid: hdr.PID, role: "guest",
-		started: hdr.Started, manager: hdr.Manager, hub: hb,
+		started: hdr.Started, manager: hdr.Manager, kind: kind, hub: hb,
 	}
 	rg.add(st)
 	defer rg.remove(hdr.ID)
@@ -350,7 +366,7 @@ func becomeHost(ln net.Listener, cfg *config, port int, id string, h *hub) {
 	rg := newRegistry(port)
 	rg.add(&stream{
 		id: id, cmd: cmdLabel(cfg), pid: os.Getpid(), role: "host",
-		started: nowStamp(), manager: cfg.manager, hub: h,
+		started: nowStamp(), manager: cfg.manager, kind: cfg.kind(), hub: h,
 	})
 
 	// Local unix socket for guests. Winning the TCP bind makes us the authority,
@@ -380,7 +396,7 @@ func becomeGuest(cfg *config, port int, id string, h *hub) error {
 	defer conn.Close()
 
 	hdr, _ := json.Marshal(guestHeader{
-		ID: id, Cmd: cmdLabel(cfg), PID: os.Getpid(), Started: nowStamp(), Manager: cfg.manager,
+		ID: id, Cmd: cmdLabel(cfg), PID: os.Getpid(), Started: nowStamp(), Manager: cfg.manager, Kind: cfg.kind(),
 	})
 	if _, err := conn.Write(append(hdr, '\n')); err != nil {
 		return err
@@ -408,6 +424,9 @@ func becomeGuest(cfg *config, port int, id string, h *hub) error {
 }
 
 func cmdLabel(cfg *config) string {
+	if cfg.screen {
+		return "screen: " + cfg.screenQuery
+	}
 	if cfg.pipe {
 		return "(pipe)"
 	}

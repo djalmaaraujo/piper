@@ -82,6 +82,7 @@ piper --ngrok <command>         # force ngrok
 piper --port 8080 <command>     # share on a custom port
 piper --manager <command>       # enable the web index (/) of running streams
 piper --list                    # list pipers running on this machine
+piper screen "<window name>"    # share a macOS window as a live image
 <command> | piper               # pipe mode (reads stdin)
 ```
 
@@ -97,6 +98,19 @@ curl -N http://localhost:9999/USHS82  # raw stream
 The index of everything running (`http://localhost:9999/`) is **disabled by default** so a viewer can't enumerate your streams — you need the id to reach one. Start any piper with `--manager` to enable the index page.
 
 The first piper to start owns the HTTP server (the "host"); later ones attach to it and push their output over a local unix socket. If the host exits, another instance takes over automatically. The default port is `9999`, but if something else is already using it piper quietly tries the next free port (and other pipers find it there). Running pipers are tracked in `~/piper-config.json`; hitting an id that isn't running returns a friendly *broken pipe* page.
+
+### Screen sharing (macOS)
+
+Share a single window to the same web page, as a live image:
+
+```bash
+piper screen --list-windows        # see what's open
+piper screen "Chrome"              # share the first window matching "Chrome"
+piper screen --fps 10 "Slack"      # faster updates
+piper screen --scale 1600 "Cursor" # cap frame width (px); 0 = native
+```
+
+It captures the chosen window with `screencapture`, streams it as MJPEG to `/<id>` (image centered on the page), and viewers watch in a browser. Frames are written to a single temp file that's overwritten each tick and deleted on exit, so disk use stays bounded. Requires macOS Screen Recording permission (needed both to read window titles and to capture).
 
 ### Public sharing
 

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>piper screen</title>
+  <style>
+    :root { --bg: #0f172a; --fg: #e6e8f0; --muted: #64748b; }
+    html, body { height: 100%; margin: 0; background: var(--bg); }
+    /* share centered on the page */
+    #stage {
+      position: fixed; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      padding: 24px; box-sizing: border-box;
+    }
+    #shot {
+      max-width: 100%; max-height: 100%;
+      object-fit: contain;
+      border-radius: 8px;
+      box-shadow: 0 12px 40px rgba(0,0,0,.5);
+      background: #000;
+    }
+    #status {
+      position: fixed; top: 8px; right: 12px; z-index: 10;
+      font: 12px ui-monospace, monospace; color: var(--muted);
+      background: rgba(15,23,42,.7); padding: 2px 8px; border-radius: 6px;
+    }
+    #status .sep { margin: 0 8px; color: #334155; }
+    #status .meta { color: #94a3b8; }
+    #brand { position: fixed; bottom: 12px; right: 12px; z-index: 10;
+             opacity: .4; transition: opacity .15s; }
+    #brand:hover { opacity: .9; }
+    #brand img { height: 48px; display: block; }
+  </style>
+</head>
+<body>
+  <div id="status"><span class="meta" id="pid">ID: --</span><span class="sep">·</span><span class="meta" id="since">started --</span></div>
+  <a id="brand" href="https://github.com/djalmaaraujo/piper" target="_blank" rel="noopener" title="piper on GitHub">
+    <img alt="piper" src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTgwIiBoZWlnaHQ9IjE4MCIgdmlld0JveD0iMTAgMjAgMTgwIDE4MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IlBpcGVyIGljb24iPgogIDxkZWZzPgogICAgPGxpbmVhckdyYWRpZW50IGlkPSJwaXBlR3JhZCIgeDE9IjAiIHkxPSIwIiB4Mj0iMSIgeTI9IjEiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAlIiBzdG9wLWNvbG9yPSIjMjJkM2VlIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMTAwJSIgc3RvcC1jb2xvcj0iIzYzNjZmMSIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0iYmdHcmFkIiB4MT0iMCIgeTE9IjAiIHgyPSIxIiB5Mj0iMSI+CiAgICAgIDxzdG9wIG9mZnNldD0iMCUiIHN0b3AtY29sb3I9IiMwZjE3MmEiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxMDAlIiBzdG9wLWNvbG9yPSIjMWUxYjRiIi8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogIDwvZGVmcz4KCiAgPHJlY3QgeD0iMjAiIHk9IjMwIiB3aWR0aD0iMTYwIiBoZWlnaHQ9IjE2MCIgcng9IjI4IiBmaWxsPSJ1cmwoI2JnR3JhZCkiIHN0cm9rZT0idXJsKCNwaXBlR3JhZCkiIHN0cm9rZS13aWR0aD0iNCIvPgoKICA8IS0tIHByb21wdCBjaGV2cm9uIC0tPgogIDxwYXRoIGQ9Ik01OCA4NiBMODYgMTEwIEw1OCAxMzQiIHN0cm9rZT0idXJsKCNwaXBlR3JhZCkiIHN0cm9rZS13aWR0aD0iMTEiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgZmlsbD0ibm9uZSIvPgoKICA8IS0tIHN0cmVhbWluZyBwaXBlOiB2ZXJ0aWNhbCBiYXIgd2l0aCBmbG93aW5nIGRvdHMgLS0+CiAgPHJlY3QgeD0iMTA0IiB5PSI4NCIgd2lkdGg9IjEyIiBoZWlnaHQ9IjUyIiByeD0iNiIgZmlsbD0idXJsKCNwaXBlR3JhZCkiLz4KICA8Y2lyY2xlIGN4PSIxMzIiIGN5PSIxMTAiIHI9IjciIGZpbGw9IiMyMmQzZWUiLz4KICA8Y2lyY2xlIGN4PSIxNTAiIGN5PSIxMTAiIHI9IjUiIGZpbGw9IiMzOGJkZjgiIG9wYWNpdHk9IjAuNyIvPgogIDxjaXJjbGUgY3g9IjE2NCIgY3k9IjExMCIgcj0iMy41IiBmaWxsPSIjNjM2NmYxIiBvcGFjaXR5PSIwLjUiLz4KPC9zdmc+Cg==">
+  </a>
+
+  <div id="stage"><img id="shot" alt="shared window"></div>
+
+  <script>
+    const base = location.pathname.replace(/\/+$/, "");
+    // MJPEG multipart auto-refreshes the <img> with each new frame.
+    document.getElementById("shot").src = base + "/stream";
+
+    (async function loadInfo() {
+      try {
+        const r = await fetch(base + "/info");
+        if (!r.ok) return;
+        const j = await r.json();
+        if (j.id) { document.getElementById("pid").textContent = "ID: " + j.id; document.title = "piper · " + j.id; }
+        if (j.started) document.getElementById("since").textContent = "started " + j.started;
+      } catch (_) {}
+    })();
+  </script>
+</body>
+</html>
