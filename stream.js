@@ -10,7 +10,15 @@ const args = process.argv.slice(2);
 // parse flags
 const isPublic = args.includes('--public');
 const portIdx = args.indexOf('--port');
-const PORT = portIdx !== -1 ? parseInt(args[portIdx + 1], 10) : (process.env.PORT || 9999);
+const PORT = portIdx !== -1
+  ? parseInt(args[portIdx + 1], 10)
+  : (parseInt(process.env.PORT, 10) || 9999);
+
+if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
+  const given = portIdx !== -1 ? args[portIdx + 1] : process.env.PORT;
+  process.stderr.write(`  Error: invalid port: ${given}\n`);
+  process.exit(1);
+}
 
 // remove flags to get the command
 const cmdArgs = args.filter((a, i) => {
@@ -21,14 +29,17 @@ const cmdArgs = args.filter((a, i) => {
 });
 
 // detect mode: pipe (stdin) or command
+const wantsHelp = args.includes('-h') || args.includes('--help');
 const isPipe = cmdArgs.length === 0;
 
-if (!isPipe && cmdArgs.length === 0) {
+// no command + interactive stdin (nothing piped in) => show usage instead of hanging
+if (wantsHelp || (isPipe && process.stdin.isTTY)) {
   process.stderr.write('Usage:\n');
   process.stderr.write('  piper <command>              # run command and stream\n');
   process.stderr.write('  piper --public <command>     # stream publicly via Tailscale Funnel\n');
-  process.stderr.write('  command | piper              # pipe mode (may buffer)\n');
-  process.exit(1);
+  process.stderr.write('  piper --port <n> <command>   # listen on a custom port\n');
+  process.stderr.write('  command | piper              # pipe mode (reads stdin)\n');
+  process.exit(wantsHelp ? 0 : 1);
 }
 
 const clients = new Set();
@@ -83,7 +94,11 @@ function broadcast(chunk) {
   }
 
   for (const client of clients) {
-    client.write(chunk);
+    try {
+      client.write(chunk);
+    } catch {
+      clients.delete(client);
+    }
   }
 
   process.stdout.write(chunk);
@@ -128,6 +143,7 @@ const server = http.createServer((req, res) => {
   }
 
   clients.add(res);
+  res.on('error', () => clients.delete(res));
   req.on('close', () => clients.delete(res));
 });
 
@@ -138,8 +154,10 @@ function startSource() {
     process.stdin.on('data', broadcast);
     process.stdin.on('end', shutdown);
   } else {
-    // command mode: run with script(1) to force PTY (no buffering)
-    const cmd = cmdArgs.join(' ');
+    // command mode: run with script(1) to force PTY (no buffering).
+    // shell-quote each arg so spaces/quotes survive the round-trip through the shell.
+    const shellQuote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+    const cmd = cmdArgs.map(shellQuote).join(' ');
 
     // macOS: script -q /dev/null command
     // Linux: script -qfc command /dev/null
