@@ -1,23 +1,26 @@
 package main
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
 	"html"
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
-	"strconv"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 )
 
-// Many pipers share one port. The first to bind it becomes the host and runs
-// the HTTP server, routing by stream id. Later pipers become guests: they push
-// their output to the host over HTTP (POST /_ingest/<id>). If the host exits,
-// the port frees and a guest promotes itself on its next loop iteration.
+// Many pipers share one TCP port. The first to bind it becomes the host and
+// runs the HTTP server, routing by stream id. Later pipers become guests: they
+// forward their output to the host over a local UNIX SOCKET — never the
+// network. So the TCP port has no write surface at all (a POST gets 405); the
+// only way to feed a stream is a same-user process on this machine. If the host
+// exits, the port frees and a guest promotes itself on its next loop iteration.
 //
 // No background daemon: the "host" is simply the first piper's own process.
 
@@ -102,6 +105,14 @@ func (rg *registry) persistLocked() {
 // HTTP routing (host only)
 
 func (rg *registry) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Read-only by construction: no endpoint ever ingests data over the network.
+	// Reject writes explicitly so the intent is unmistakable.
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "piper serves reads only", http.StatusMethodNotAllowed)
+		return
+	}
+
 	if r.URL.Path == "/health" {
 		w.WriteHeader(http.StatusOK)
 		io.WriteString(w, "ok")
@@ -115,14 +126,7 @@ func (rg *registry) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	parts := strings.SplitN(path, "/", 2)
-	head := parts[0]
-
-	if head == "_ingest" {
-		rg.handleIngest(w, r, parts)
-		return
-	}
-
-	id := head
+	id := parts[0]
 	st, ok := rg.get(id)
 	if !ok || !validID(id) {
 		rg.serveBrokenPipe(w, r, id)
@@ -131,6 +135,11 @@ func (rg *registry) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case len(parts) == 2 && parts[1] == "stream":
 		st.hub.streamHandler(w, r)
+	case len(parts) == 2 && parts[1] == "info":
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": st.id, "started": st.started, "cmd": st.cmd, "role": st.role,
+		})
 	case len(parts) == 1:
 		if wantsHTML(r) {
 			serveAsset("web/index.html", "text/html; charset=utf-8")(w, r)
@@ -142,34 +151,51 @@ func (rg *registry) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleIngest accepts a guest's streamed output and serves it under its id.
-func (rg *registry) handleIngest(w http.ResponseWriter, r *http.Request, parts []string) {
-	// Ingest is for local guest pipers only — never accept output pushed from
-	// the LAN or a tunnel (would let a stranger spoof/register streams).
-	if !isLoopback(r) {
-		http.Error(w, "forbidden", http.StatusForbidden)
+// guestHeader is the first line a guest sends over the unix socket, before its
+// raw output stream.
+type guestHeader struct {
+	ID      string `json:"id"`
+	Cmd     string `json:"cmd"`
+	PID     int    `json:"pid"`
+	Started string `json:"started"`
+}
+
+// acceptGuests serves the host's unix socket: each connecting guest registers a
+// stream (header line) then streams its output.
+func acceptGuests(ul net.Listener, rg *registry) {
+	for {
+		conn, err := ul.Accept()
+		if err != nil {
+			return
+		}
+		go handleGuestConn(conn, rg)
+	}
+}
+
+func handleGuestConn(conn net.Conn, rg *registry) {
+	defer conn.Close()
+	br := bufio.NewReader(conn)
+	line, err := br.ReadString('\n')
+	if err != nil {
 		return
 	}
-	if r.Method != http.MethodPost || len(parts) < 2 || parts[1] == "" {
-		http.Error(w, "bad ingest", http.StatusBadRequest)
+	var hdr guestHeader
+	if json.Unmarshal([]byte(line), &hdr) != nil || !validID(hdr.ID) {
 		return
 	}
-	id := parts[1]
-	q := r.URL.Query()
-	pid, _ := strconv.Atoi(q.Get("pid"))
 
 	hb := newHub(replayLines)
 	hb.echo = false // don't print a guest's output on the host's terminal
 	st := &stream{
-		id: id, cmd: q.Get("cmd"), pid: pid, role: "guest",
-		started: q.Get("started"), hub: hb,
+		id: hdr.ID, cmd: hdr.Cmd, pid: hdr.PID, role: "guest",
+		started: hdr.Started, hub: hb,
 	}
 	rg.add(st)
-	defer rg.remove(id)
+	defer rg.remove(hdr.ID)
 
 	buf := make([]byte, 32*1024)
 	for {
-		n, err := r.Body.Read(buf)
+		n, err := br.Read(buf)
 		if n > 0 {
 			hb.broadcast(buf[:n])
 		}
@@ -178,7 +204,6 @@ func (rg *registry) handleIngest(w http.ResponseWriter, r *http.Request, parts [
 		}
 	}
 	hb.close()
-	w.WriteHeader(http.StatusOK)
 }
 
 func (rg *registry) serveIndex(w http.ResponseWriter, r *http.Request) {
@@ -243,12 +268,37 @@ func publish(cfg *config, id string, h *hub) {
 	}
 }
 
+// socketPath is the host's local control socket for this port. It lives in the
+// user's home dir with 0600 perms, so only the same user can connect — and it's
+// not reachable over the network at all.
+func socketPath(port int) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = os.TempDir()
+	}
+	return filepath.Join(home, fmt.Sprintf(".piper-%d.sock", port))
+}
+
 func becomeHost(ln net.Listener, cfg *config, id string, h *hub) {
 	rg := newRegistry(cfg.port)
 	rg.add(&stream{
 		id: id, cmd: cmdLabel(cfg), pid: os.Getpid(), role: "host",
 		started: nowStamp(), hub: h,
 	})
+
+	// Local unix socket for guests. Winning the TCP bind makes us the authority,
+	// so it's safe to clear a stale socket file left by a previous host.
+	sp := socketPath(cfg.port)
+	os.Remove(sp)
+	if ul, err := net.Listen("unix", sp); err == nil {
+		os.Chmod(sp, 0o600)
+		hostMu.Lock()
+		hostSock = sp
+		hostMu.Unlock()
+		go acceptGuests(ul, rg)
+		defer func() { ul.Close(); os.Remove(sp) }()
+	}
+
 	tunnelURL := startTunnelOnce(cfg)
 	printBanner(cfg, id, "host", tunnelURL)
 	srv := &http.Server{Handler: rg}
@@ -256,52 +306,38 @@ func becomeHost(ln net.Listener, cfg *config, id string, h *hub) {
 }
 
 func becomeGuest(cfg *config, id string, h *hub) error {
-	base := fmt.Sprintf("http://localhost:%d", cfg.port)
-	q := url.Values{}
-	q.Set("cmd", cmdLabel(cfg))
-	q.Set("pid", strconv.Itoa(os.Getpid()))
-	q.Set("started", nowStamp())
-	endpoint := base + "/_ingest/" + id + "?" + q.Encode()
-
-	pr, pw := io.Pipe()
-	req, err := http.NewRequest(http.MethodPost, endpoint, pr)
+	conn, err := net.Dial("unix", socketPath(cfg.port))
 	if err != nil {
+		return err // host not reachable (maybe just died) — caller may promote us
+	}
+	defer conn.Close()
+
+	hdr, _ := json.Marshal(guestHeader{
+		ID: id, Cmd: cmdLabel(cfg), PID: os.Getpid(), Started: nowStamp(),
+	})
+	if _, err := conn.Write(append(hdr, '\n')); err != nil {
 		return err
 	}
-
-	ch, snap := h.register()
-	go func() {
-		if len(snap) > 0 {
-			pw.Write(snap)
-		}
-		for chunk := range ch {
-			if _, e := pw.Write(chunk); e != nil {
-				break
-			}
-		}
-		pw.Close()
-	}()
 
 	tunnelURL := startTunnelOnce(cfg)
 	printBanner(cfg, id, "guest", tunnelURL)
 
-	resp, err := http.DefaultClient.Do(req) // blocks until body EOF or conn drops
-	h.unregister(ch)
-	if err != nil {
-		return err
+	ch, snap := h.register()
+	defer h.unregister(ch)
+	if len(snap) > 0 {
+		if _, err := conn.Write(snap); err != nil {
+			return err
+		}
 	}
-	resp.Body.Close()
-	return nil
-}
-
-// isLoopback reports whether the request came from 127.0.0.1/::1.
-func isLoopback(r *http.Request) bool {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
+	for {
+		chunk, open := <-ch
+		if !open {
+			return nil // our source ended cleanly
+		}
+		if _, err := conn.Write(chunk); err != nil {
+			return err // host died — caller may promote us
+		}
 	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
 }
 
 func cmdLabel(cfg *config) string {
@@ -318,6 +354,9 @@ var (
 	tunnelMu        sync.Mutex
 	activeTunnel    Tunnel
 	activeTunnelURL string
+
+	hostMu   sync.Mutex
+	hostSock string // unix socket path we created as host, if any
 )
 
 func startTunnelOnce(cfg *config) string {
@@ -348,8 +387,18 @@ func stopTunnel() {
 }
 
 // cleanup tears down anything this process started before it exits.
+// (os.Exit skips defers, so the host socket is removed here too.)
 func cleanup() {
 	stopTunnel()
+	hostMu.Lock()
+	sp := hostSock
+	hostMu.Unlock()
+	if sp != "" {
+		os.Remove(sp)
+		// We owned the state file as host; clear it so `--list` isn't stale.
+		// A surviving guest that promotes will rewrite it within a moment.
+		_ = writeState(stateFile{})
+	}
 }
 
 // ---------------------------------------------------------------------------

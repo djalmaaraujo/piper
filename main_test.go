@@ -300,3 +300,83 @@ func silenceStdout(t *testing.T) {
 		devnull.Close()
 	})
 }
+
+func TestBrokerRouting(t *testing.T) {
+	silenceStdout(t)
+	rg := newRegistry(9999)
+	h := newHub(100)
+	rg.add(&stream{id: "ABC123", cmd: "echo hi", pid: 1, role: "host", hub: h})
+	srv := httptest.NewServer(rg)
+	defer srv.Close()
+
+	t.Run("POST is rejected (no write surface)", func(t *testing.T) {
+		resp, err := http.Post(srv.URL+"/ABC123", "text/plain", strings.NewReader("evil"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusMethodNotAllowed {
+			t.Errorf("POST status = %d, want 405", resp.StatusCode)
+		}
+	})
+
+	t.Run("unknown id -> broken pipe 404", func(t *testing.T) {
+		resp, err := http.Get(srv.URL + "/ZZZZZZ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("status = %d, want 404", resp.StatusCode)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		if !strings.Contains(strings.ToLower(string(body)), "broken pipe") {
+			t.Errorf("expected a broken-pipe message, got %q", body)
+		}
+	})
+
+	t.Run("index lists the stream", func(t *testing.T) {
+		resp, err := http.Get(srv.URL + "/")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		if !strings.Contains(string(body), "ABC123") {
+			t.Errorf("index missing stream id, got %q", body)
+		}
+	})
+
+	t.Run("browser gets HTML page at /id", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", srv.URL+"/ABC123", nil)
+		req.Header.Set("Accept", "text/html")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		if !strings.Contains(string(body), `id="log"`) {
+			t.Error("expected the terminal page at /id")
+		}
+	})
+
+	t.Run("curl gets raw stream at /id/stream", func(t *testing.T) {
+		h.appendReplay([]byte("hello-stream\n"))
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/ABC123/stream", nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		buf := make([]byte, len("hello-stream\n"))
+		if _, err := io.ReadFull(resp.Body, buf); err != nil {
+			t.Fatal(err)
+		}
+		if string(buf) != "hello-stream\n" {
+			t.Errorf("stream = %q", buf)
+		}
+	})
+}
