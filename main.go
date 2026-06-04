@@ -46,6 +46,10 @@ func main() {
 		runList(cfg.port)
 		os.Exit(0)
 	}
+	if cfg.screen && cfg.listWindows {
+		runListWindows()
+		os.Exit(0)
+	}
 	if cfg.help {
 		printUsage(os.Stdout)
 		os.Exit(0)
@@ -53,6 +57,11 @@ func main() {
 
 	id := genID()
 	hub := newHub(replayLines) // local hub: mirrors to our terminal + serves replay
+	if cfg.screen {
+		// MJPEG frames are binary: don't mirror to the terminal or buffer lines.
+		hub.echo = false
+		hub.binary = true
+	}
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -68,9 +77,12 @@ func main() {
 	go publish(cfg, id, hub)
 
 	var exitCode int
-	if cfg.pipe {
+	switch {
+	case cfg.screen:
+		exitCode = runScreenSource(cfg, hub)
+	case cfg.pipe:
 		runPipe(hub)
-	} else {
+	default:
 		exitCode = runCommand(hub, cfg.command)
 	}
 
@@ -92,10 +104,30 @@ type config struct {
 	manager     bool   // --manager: enable the web index of running streams
 	public      bool   // expose via a tunnel
 	provider    string // forced provider name, or "" for auto-detect
+
+	screen      bool   // `piper screen`: share a window as MJPEG
+	screenQuery string // window name to match
+	listWindows bool   // `piper screen --list-windows`
+	fps         int    // screen capture rate
+	scale       int    // screen max width in px (0 = native)
+}
+
+// kind reports the stream type for the broker/page: "mjpeg" for screen, else "text".
+func (c *config) kind() string {
+	if c.screen {
+		return "mjpeg"
+	}
+	return "text"
 }
 
 func parseArgs(argv []string) (*config, error) {
-	c := &config{port: defaultPort}
+	c := &config{port: defaultPort, fps: 5, scale: 1280}
+
+	// `piper screen ...` is a subcommand: share a window instead of a command.
+	if len(argv) > 0 && argv[0] == "screen" {
+		c.screen = true
+		argv = argv[1:]
+	}
 
 	if env := os.Getenv("PORT"); env != "" {
 		p, err := strconv.Atoi(env)
@@ -116,6 +148,34 @@ func parseArgs(argv []string) (*config, error) {
 			c.list = true
 		case "--manager":
 			c.manager = true
+		case "--list-windows":
+			c.listWindows = true
+		case "--window":
+			if i+1 >= len(argv) {
+				return nil, errors.New("--window needs a value")
+			}
+			c.screenQuery = argv[i+1]
+			i++
+		case "--fps":
+			if i+1 >= len(argv) {
+				return nil, errors.New("--fps needs a value")
+			}
+			n, err := strconv.Atoi(argv[i+1])
+			if err != nil {
+				return nil, fmt.Errorf("invalid fps: %q", argv[i+1])
+			}
+			c.fps = n
+			i++
+		case "--scale":
+			if i+1 >= len(argv) {
+				return nil, errors.New("--scale needs a value")
+			}
+			n, err := strconv.Atoi(argv[i+1])
+			if err != nil {
+				return nil, fmt.Errorf("invalid scale: %q", argv[i+1])
+			}
+			c.scale = n
+			i++
 		case "--public":
 			c.public = true
 		case "--tailscale", "--cloudflared", "--ngrok":
@@ -141,6 +201,13 @@ func parseArgs(argv []string) (*config, error) {
 	}
 
 	c.command = rest
+	if c.screen {
+		// In screen mode the leftover words are the window name to match.
+		if c.screenQuery == "" {
+			c.screenQuery = strings.Join(rest, " ")
+		}
+		return c, nil
+	}
 	if len(rest) == 0 && !c.list && !c.showVersion {
 		// No command => pipe mode, unless stdin is an interactive terminal
 		// (nothing piped in), in which case show usage instead of hanging.
@@ -164,7 +231,11 @@ Usage:
   piper --port <n> <command>   share on a custom port (default 9999)
   piper --manager <command>    enable the web index (/) of running streams
   piper --list                 list pipers currently running on this machine
+  piper screen "<window>"      share a macOS window as a live image (MJPEG)
+  piper screen --list-windows  list shareable windows
   <command> | piper            pipe mode (reads stdin)
+
+Screen options:  --fps <n> (default 5)   --scale <px width> (0 = native)
 
 Many pipers share one port; each gets a unique id and its own URL:
   http://localhost:9999/<id>          (browser)
@@ -183,6 +254,7 @@ type hub struct {
 	partial  []byte   // trailing bytes with no newline yet
 	maxLines int
 	echo     bool // mirror output to this process's stdout
+	binary   bool // MJPEG/binary stream: no line replay, no stdout echo
 	closed   bool
 }
 
@@ -237,6 +309,9 @@ func (h *hub) close() {
 
 // appendReplay keeps the last maxLines complete lines. Caller holds h.mu.
 func (h *hub) appendReplay(chunk []byte) {
+	if h.binary {
+		return // binary streams (MJPEG) aren't line-buffered for replay
+	}
 	data := append(h.partial, chunk...)
 	for {
 		i := strings.IndexByte(string(data), '\n')
@@ -289,7 +364,11 @@ func (h *hub) streamHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	if h.binary {
+		w.Header().Set("Content-Type", "multipart/x-mixed-replace; boundary="+mjpegBoundary)
+	} else {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	}
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
 

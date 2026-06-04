@@ -16,6 +16,10 @@
 
 ---
 
+<p align="center">
+  <img src="assets/demo.gif" alt="piper screen demo — sharing a window live in the browser" width="900">
+</p>
+
 ## What it does
 
 You run a command. Piper runs it for you, prints the output to your terminal exactly as normal — **and** serves that same output, live, over HTTP. Anyone you share the URL with sees it stream in real time.
@@ -35,6 +39,10 @@ piper npm run build
 ```
 
 Now `curl -N http://100.x.y.z:9999/QGNABD` from another machine (or open it in a browser) and watch the build scroll by.
+
+<p align="center">
+  <img src="assets/screenshot-logs.png" alt="piper log stream in the browser" width="640">
+</p>
 
 ## Features
 
@@ -82,6 +90,7 @@ piper --ngrok <command>         # force ngrok
 piper --port 8080 <command>     # share on a custom port
 piper --manager <command>       # enable the web index (/) of running streams
 piper --list                    # list pipers running on this machine
+piper screen "<window name>"    # share a macOS window as a live image
 <command> | piper               # pipe mode (reads stdin)
 ```
 
@@ -97,6 +106,29 @@ curl -N http://localhost:9999/USHS82  # raw stream
 The index of everything running (`http://localhost:9999/`) is **disabled by default** so a viewer can't enumerate your streams — you need the id to reach one. Start any piper with `--manager` to enable the index page.
 
 The first piper to start owns the HTTP server (the "host"); later ones attach to it and push their output over a local unix socket. If the host exits, another instance takes over automatically. The default port is `9999`, but if something else is already using it piper quietly tries the next free port (and other pipers find it there). Running pipers are tracked in `~/piper-config.json`; hitting an id that isn't running returns a friendly *broken pipe* page.
+
+### Screen sharing (macOS)
+
+Share a single window to the same web page, as a live image:
+
+```bash
+piper screen                       # native picker — choose a window from a list
+piper screen "Chrome"              # share the first window matching "Chrome"
+piper screen --list-windows        # print shareable windows
+piper screen --fps 10 "Slack"      # faster updates
+piper screen --scale 1600 "Cursor" # cap frame width (px); 0 = native
+```
+
+Run with no name and piper pops a **native window picker** (a macOS list dialog) to choose from. It captures the chosen window with `screencapture`, streams it as MJPEG to `/<id>` (image centered on the page), and viewers watch in a browser.
+
+**Permission.** Screen sharing needs macOS **Screen Recording** access (to read window titles and capture). piper asks for it **only the first time you run `piper screen`** — never when streaming commands. If you miss the prompt, enable your terminal under *System Settings → Privacy & Security → Screen Recording* and run it again.
+
+**Resource use / limits.**
+- Each frame is one `screencapture` (+ a `sips` downscale). CPU scales with **fps × window size** — keep fps modest (default 5) for big Retina windows.
+- Bandwidth ≈ **fps × frame size** (~100–300 KB/frame at `--scale 1280`). At 8 fps that's ~1–2 MB/s — mind it over a tunnel; lower `--fps` or `--scale` for remote viewers.
+- It's a frame stream, not smooth video — great for "watch what's happening", not 60 fps motion.
+- **Disk stays bounded**: frames use one temp file, overwritten each tick and deleted right after it's read (and on exit) — nothing accumulates.
+- Sharing the window you're *watching* in just produces a harmless infinity-mirror effect; resource use is fixed at the capture rate, no feedback loop.
 
 ### Public sharing
 

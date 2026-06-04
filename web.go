@@ -10,7 +10,7 @@ import (
 // libraries — just a fetch loop into a <pre>). Embedded at build time, so the
 // binary stays self-contained. embed is standard library — no Go dependencies.
 //
-//go:embed web/index.html
+//go:embed web/index.html web/screen.html
 var webFS embed.FS
 
 // wantsHTML reports whether the request looks like a browser (vs curl).
