@@ -104,13 +104,23 @@ The first piper to start owns the HTTP server (the "host"); later ones attach to
 Share a single window to the same web page, as a live image:
 
 ```bash
-piper screen --list-windows        # see what's open
+piper screen                       # native picker — choose a window from a list
 piper screen "Chrome"              # share the first window matching "Chrome"
+piper screen --list-windows        # print shareable windows
 piper screen --fps 10 "Slack"      # faster updates
 piper screen --scale 1600 "Cursor" # cap frame width (px); 0 = native
 ```
 
-It captures the chosen window with `screencapture`, streams it as MJPEG to `/<id>` (image centered on the page), and viewers watch in a browser. Frames are written to a single temp file that's overwritten each tick and deleted on exit, so disk use stays bounded. Requires macOS Screen Recording permission (needed both to read window titles and to capture).
+Run with no name and piper pops a **native window picker** (a macOS list dialog) to choose from. It captures the chosen window with `screencapture`, streams it as MJPEG to `/<id>` (image centered on the page), and viewers watch in a browser.
+
+**Permission.** Screen sharing needs macOS **Screen Recording** access (to read window titles and capture). piper asks for it **only the first time you run `piper screen`** — never when streaming commands. If you miss the prompt, enable your terminal under *System Settings → Privacy & Security → Screen Recording* and run it again.
+
+**Resource use / limits.**
+- Each frame is one `screencapture` (+ a `sips` downscale). CPU scales with **fps × window size** — keep fps modest (default 5) for big Retina windows.
+- Bandwidth ≈ **fps × frame size** (~100–300 KB/frame at `--scale 1280`). At 8 fps that's ~1–2 MB/s — mind it over a tunnel; lower `--fps` or `--scale` for remote viewers.
+- It's a frame stream, not smooth video — great for "watch what's happening", not 60 fps motion.
+- **Disk stays bounded**: frames use one temp file, overwritten each tick and deleted right after it's read (and on exit) — nothing accumulates.
+- Sharing the window you're *watching* in just produces a harmless infinity-mirror effect; resource use is fixed at the capture rate, no feedback loop.
 
 ### Public sharing
 

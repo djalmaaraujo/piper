@@ -5,6 +5,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -46,19 +47,40 @@ for w in list {
   print("\(id)\t\(app)\t\(title)")
 }`
 
-func listWindows() ([]winInfo, error) {
-	f, err := os.CreateTemp("", "piper-windows-*.swift")
+// runSwift writes a Swift snippet to a temp file and runs it, returning stdout.
+func runSwift(script string) ([]byte, error) {
+	f, err := os.CreateTemp("", "piper-*.swift")
 	if err != nil {
 		return nil, err
 	}
 	defer os.Remove(f.Name())
-	if _, err := f.WriteString(listWindowsScript); err != nil {
+	if _, err := f.WriteString(script); err != nil {
 		f.Close()
 		return nil, err
 	}
 	f.Close()
+	return exec.Command("swift", f.Name()).Output()
+}
 
-	out, err := exec.Command("swift", f.Name()).Output()
+// ensureScreenPermission prompts for macOS Screen Recording access on first use
+// and reports whether it's granted. Only called by `piper screen`.
+func ensureScreenPermission() bool {
+	out, err := runSwift("import CoreGraphics\nprint(CGRequestScreenCaptureAccess() ? \"granted\" : \"denied\")")
+	if err != nil {
+		return true // can't check (no swift?) — let capture try and fail loudly
+	}
+	return strings.TrimSpace(string(out)) == "granted"
+}
+
+func screenPermissionHelp() {
+	fmt.Fprintln(os.Stderr, "  piper screen needs macOS Screen Recording permission.")
+	fmt.Fprintln(os.Stderr, "  Authorize it in the dialog that just opened, or:")
+	fmt.Fprintln(os.Stderr, "    System Settings → Privacy & Security → Screen Recording → enable your terminal")
+	fmt.Fprintln(os.Stderr, "  then run piper screen again.")
+}
+
+func listWindows() ([]winInfo, error) {
+	out, err := runSwift(listWindowsScript)
 	if err != nil {
 		return nil, fmt.Errorf("could not list windows (is the Xcode CLT / swift installed?): %w", err)
 	}
@@ -113,14 +135,70 @@ func pickWindow(query string) (winInfo, []winInfo, error) {
 // runScreenSource captures the chosen window into the hub as an MJPEG stream.
 // Frames are written to a single temp file that is overwritten each tick and
 // removed on exit, so disk use stays bounded regardless of stream length.
-func runScreenSource(cfg *config, h *hub) int {
-	win, wins, err := pickWindow(cfg.screenQuery)
+// asQuote escapes a string for embedding in an AppleScript string literal.
+func asQuote(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	return `"` + s + `"`
+}
+
+// chooseWindow shows a native macOS picker (osascript) listing open windows.
+// Used when `piper screen` is run without a window name.
+func chooseWindow() (winInfo, error) {
+	wins, err := listWindows()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "  Error: %v\n", err)
-		if len(wins) > 0 {
-			printWindows(wins)
-		}
+		return winInfo{}, err
+	}
+	if len(wins) == 0 {
+		return winInfo{}, errors.New("no windows found")
+	}
+	items := make([]string, len(wins))
+	for i, w := range wins {
+		items[i] = asQuote(fmt.Sprintf("%d: %s", i+1, w.label()))
+	}
+	script := fmt.Sprintf(
+		`choose from list {%s} with title "piper screen" with prompt "Select a window to share:"`,
+		strings.Join(items, ", "))
+	out, err := exec.Command("osascript", "-e", script).Output()
+	if err != nil {
+		return winInfo{}, err
+	}
+	sel := strings.TrimSpace(string(out))
+	if sel == "" || sel == "false" {
+		return winInfo{}, errors.New("cancelled")
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(strings.SplitN(sel, ":", 2)[0]))
+	if err != nil || n < 1 || n > len(wins) {
+		return winInfo{}, errors.New("bad selection")
+	}
+	return wins[n-1], nil
+}
+
+func runScreenSource(cfg *config, h *hub) int {
+	if !ensureScreenPermission() {
+		screenPermissionHelp()
 		return 1
+	}
+
+	var win winInfo
+	if cfg.screenQuery == "" {
+		// No name given: show the native picker.
+		w, err := chooseWindow()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  %v\n", err)
+			return 1
+		}
+		win = w
+	} else {
+		w, wins, err := pickWindow(cfg.screenQuery)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  Error: %v\n", err)
+			if len(wins) > 0 {
+				printWindows(wins)
+			}
+			return 1
+		}
+		win = w
 	}
 
 	fps := cfg.fps
@@ -184,6 +262,10 @@ func mjpegFrame(jpeg []byte) []byte {
 }
 
 func runListWindows() {
+	if !ensureScreenPermission() {
+		screenPermissionHelp()
+		os.Exit(1)
+	}
 	wins, err := listWindows()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  Error: %v\n", err)
