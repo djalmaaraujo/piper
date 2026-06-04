@@ -25,7 +25,7 @@
 You run a command. Piper runs it for you, prints the output to your terminal exactly as normal — **and** serves that same output, live, over HTTP. Anyone you share the URL with sees it stream in real time.
 
 ```bash
-piper npm run build
+piper ping google.com
 ```
 
 ```
@@ -38,7 +38,7 @@ piper npm run build
   Tip:       run with --manager to view multiple pipes at http://100.x.y.z:9999/
 ```
 
-Now `curl -N http://100.x.y.z:9999/QGNABD` from another machine (or open it in a browser) and watch the build scroll by.
+Now `curl -N http://100.x.y.z:9999/QGNABD` from another machine (or open it in a browser) and watch it stream live, line by line.
 
 <p align="center">
   <img src="assets/screenshot-logs.png" alt="piper log stream in the browser" width="640">
