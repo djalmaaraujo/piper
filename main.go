@@ -231,7 +231,11 @@ Usage:
   piper --port <n> <command>   share on a custom port (default 9999)
   piper --manager <command>    enable the web index (/) of running streams
   piper --list                 list pipers currently running on this machine
+  piper screen "<window>"      share a macOS window as a live image (MJPEG)
+  piper screen --list-windows  list shareable windows
   <command> | piper            pipe mode (reads stdin)
+
+Screen options:  --fps <n> (default 5)   --scale <px width> (0 = native)
 
 Many pipers share one port; each gets a unique id and its own URL:
   http://localhost:9999/<id>          (browser)
