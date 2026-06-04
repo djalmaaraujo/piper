@@ -485,19 +485,25 @@ func printBanner(port int, id, role string, manager bool, tunnelURL string) {
 	if tunnelURL != "" {
 		fmt.Fprintf(w, "  Public:    %s/%s\n", tunnelURL, id)
 	}
-	if manager {
-		fmt.Fprintf(w, "  Index:     %s/  (--manager)\n", base)
-	}
-
-	viewer := base + "/" + id
+	// pick the most shareable root for the viewer URLs
+	root := base
 	switch {
 	case tunnelURL != "":
-		viewer = tunnelURL + "/" + id
+		root = tunnelURL
 	case tsIP != "":
-		viewer = fmt.Sprintf("http://%s:%d/%s", tsIP, port, id)
+		root = fmt.Sprintf("http://%s:%d", tsIP, port)
 	}
+	viewer := root + "/" + id
+
 	fmt.Fprintf(w, "\n  Terminal:  open %s in a browser\n", viewer)
-	fmt.Fprintf(w, "  Viewers:   curl -N %s\n\n", viewer)
+	fmt.Fprintf(w, "  Viewers:   curl -N %s\n", viewer)
+	if manager {
+		fmt.Fprintf(w, "  Index:     %s/\n", root)
+	}
+	fmt.Fprintln(w)
+	if !manager {
+		fmt.Fprintf(w, "  Tip:       run with --manager to view multiple pipes at %s/\n\n", root)
+	}
 }
 
 // ---------------------------------------------------------------------------
