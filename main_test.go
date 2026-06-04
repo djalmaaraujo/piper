@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -180,8 +181,12 @@ func TestSlowClientDropped(t *testing.T) {
 
 func TestHTTPRouting(t *testing.T) {
 	silenceStdout(t)
+	t.Setenv("PIPER_CONFIG", filepath.Join(t.TempDir(), "piper-config.json"))
+	rg := newRegistry(9999)
 	h := newHub(100)
-	srv := httptest.NewServer(h.handler())
+	h.appendReplay([]byte("replayed-line\n"))
+	rg.add(&stream{id: "ABC123", cmd: "echo hi", role: "host", hub: h})
+	srv := httptest.NewServer(rg)
 	defer srv.Close()
 
 	t.Run("health", func(t *testing.T) {
@@ -196,8 +201,20 @@ func TestHTTPRouting(t *testing.T) {
 		}
 	})
 
-	t.Run("browser gets HTML page", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", srv.URL+"/", nil)
+	t.Run("index lists streams", func(t *testing.T) {
+		resp, err := http.Get(srv.URL + "/")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		if !strings.Contains(string(body), "ABC123") {
+			t.Errorf("index should list the stream id, got %q", body)
+		}
+	})
+
+	t.Run("browser gets HTML page at /<id>", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", srv.URL+"/ABC123", nil)
 		req.Header.Set("Accept", "text/html")
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
@@ -208,7 +225,6 @@ func TestHTTPRouting(t *testing.T) {
 			t.Errorf("content-type = %q", ct)
 		}
 		body, _ := io.ReadAll(resp.Body)
-		// no third-party JS: the page is a plain fetch loop into <pre id="log">
 		if !strings.Contains(string(body), `id="log"`) {
 			t.Error("HTML should contain the log element")
 		}
@@ -217,11 +233,10 @@ func TestHTTPRouting(t *testing.T) {
 		}
 	})
 
-	t.Run("curl gets raw stream with replay", func(t *testing.T) {
-		h.appendReplay([]byte("replayed-line\n"))
+	t.Run("curl gets raw stream with replay at /<id>/stream", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/", nil)
+		req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/ABC123/stream", nil)
 		req.Header.Set("Accept", "*/*")
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
@@ -239,6 +254,35 @@ func TestHTTPRouting(t *testing.T) {
 			t.Errorf("stream replay = %q", buf)
 		}
 	})
+
+	t.Run("unknown id => broken pipe 404", func(t *testing.T) {
+		resp, err := http.Get(srv.URL + "/NOPE99")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("status = %d, want 404", resp.StatusCode)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		if !strings.Contains(strings.ToLower(string(body)), "broken pipe") {
+			t.Errorf("expected broken-pipe body, got %q", body)
+		}
+	})
+}
+
+func TestIDGen(t *testing.T) {
+	seen := map[string]bool{}
+	for i := 0; i < 200; i++ {
+		id := genID()
+		if len(id) != 6 || !validID(id) {
+			t.Fatalf("bad id: %q", id)
+		}
+		seen[id] = true
+	}
+	if len(seen) < 190 { // collisions should be rare
+		t.Errorf("too many collisions: %d unique of 200", len(seen))
+	}
 }
 
 // silenceStdout redirects os.Stdout to /dev/null for the duration of a test,

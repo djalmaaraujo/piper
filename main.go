@@ -42,26 +42,17 @@ func main() {
 		fmt.Println("piper", version)
 		os.Exit(0)
 	}
+	if cfg.list {
+		runList(cfg.port)
+		os.Exit(0)
+	}
 	if cfg.help {
 		printUsage(os.Stdout)
 		os.Exit(0)
 	}
 
-	hub := newHub(replayLines)
-
-	ln, err := newListener(cfg.port)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "  Error: %v\n", err)
-		os.Exit(1)
-	}
-	srv := &http.Server{Handler: hub.handler()}
-
-	var tunnel Tunnel
-	cleanup := func() {
-		if tunnel != nil {
-			tunnel.Stop()
-		}
-	}
+	id := genID()
+	hub := newHub(replayLines) // local hub: mirrors to our terminal + serves replay
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -71,9 +62,10 @@ func main() {
 		os.Exit(130)
 	}()
 
-	go srv.Serve(ln)
-
-	printBanner(cfg, &tunnel)
+	// publish() makes this piper reachable on the shared port — as the host
+	// that owns the server, or as a guest that forwards into the existing host.
+	// Many pipers share one port; each is addressed by its unique id.
+	go publish(cfg, id, hub)
 
 	var exitCode int
 	if cfg.pipe {
@@ -82,6 +74,7 @@ func main() {
 		exitCode = runCommand(hub, cfg.command)
 	}
 
+	hub.close()
 	cleanup()
 	os.Exit(exitCode)
 }
@@ -95,6 +88,7 @@ type config struct {
 	pipe        bool
 	help        bool
 	showVersion bool
+	list        bool   // --list: show running pipers
 	public      bool   // expose via a tunnel
 	provider    string // forced provider name, or "" for auto-detect
 }
@@ -117,6 +111,8 @@ func parseArgs(argv []string) (*config, error) {
 			c.help = true
 		case "--version":
 			c.showVersion = true
+		case "--list", "--ls":
+			c.list = true
 		case "--public":
 			c.public = true
 		case "--tailscale", "--cloudflared", "--ngrok":
@@ -142,7 +138,7 @@ func parseArgs(argv []string) (*config, error) {
 	}
 
 	c.command = rest
-	if len(rest) == 0 {
+	if len(rest) == 0 && !c.list && !c.showVersion {
 		// No command => pipe mode, unless stdin is an interactive terminal
 		// (nothing piped in), in which case show usage instead of hanging.
 		c.pipe = true
@@ -162,11 +158,14 @@ Usage:
   piper --tailscale <command>  force Tailscale Funnel
   piper --cloudflared <cmd>    force a Cloudflare quick tunnel (no account)
   piper --ngrok <command>      force ngrok
-  piper --port <n> <command>   listen on a custom port (default 9999)
+  piper --port <n> <command>   share on a custom port (default 9999)
+  piper --list                 list pipers currently running on this machine
   <command> | piper            pipe mode (reads stdin)
 
-Viewers:
-  curl -N http://localhost:9999     (or open the URL in a browser)
+Many pipers share one port; each gets a unique id and its own URL:
+  http://localhost:9999/<id>          (browser)
+  curl -N http://localhost:9999/<id>  (terminal)
+  http://localhost:9999/              (index of running pipers)
 `)
 }
 
@@ -179,16 +178,22 @@ type hub struct {
 	lines    [][]byte // completed recent lines (each ends with '\n')
 	partial  []byte   // trailing bytes with no newline yet
 	maxLines int
+	echo     bool // mirror output to this process's stdout
+	closed   bool
 }
 
 func newHub(maxLines int) *hub {
-	return &hub{clients: make(map[chan []byte]struct{}), maxLines: maxLines}
+	return &hub{clients: make(map[chan []byte]struct{}), maxLines: maxLines, echo: true}
 }
 
 func (h *hub) broadcast(p []byte) {
 	chunk := append([]byte(nil), p...)
 
 	h.mu.Lock()
+	if h.closed {
+		h.mu.Unlock()
+		return
+	}
 	h.appendReplay(chunk)
 	for ch := range h.clients {
 		select {
@@ -198,9 +203,32 @@ func (h *hub) broadcast(p []byte) {
 			delete(h.clients, ch)
 		}
 	}
+	echo := h.echo
 	h.mu.Unlock()
 
-	os.Stdout.Write(p) // echo to our own terminal too
+	if echo {
+		os.Stdout.Write(p) // mirror to our own terminal
+	}
+}
+
+func (h *hub) isClosed() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.closed
+}
+
+// close ends all client streams and stops accepting further output.
+func (h *hub) close() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed {
+		return
+	}
+	h.closed = true
+	for ch := range h.clients {
+		close(ch)
+		delete(h.clients, ch)
+	}
 }
 
 // appendReplay keeps the last maxLines complete lines. Caller holds h.mu.
@@ -231,7 +259,11 @@ func (h *hub) register() (chan []byte, []byte) {
 		snap = append(snap, l...)
 	}
 	snap = append(snap, h.partial...)
-	h.clients[ch] = struct{}{}
+	if h.closed {
+		close(ch) // source already ended; reader will exit after the snapshot
+	} else {
+		h.clients[ch] = struct{}{}
+	}
 	h.mu.Unlock()
 	return ch, snap
 }
@@ -243,27 +275,6 @@ func (h *hub) unregister(ch chan []byte) {
 		close(ch)
 	}
 	h.mu.Unlock()
-}
-
-func (h *hub) handler() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		io.WriteString(w, "ok")
-	})
-
-	// Raw live stream — what curl and the browser page both read.
-	mux.HandleFunc("/stream", h.streamHandler)
-
-	// Root: serve the terminal UI to browsers, raw stream to curl & friends.
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/" && wantsHTML(r) {
-			serveAsset("web/index.html", "text/html; charset=utf-8")(w, r)
-			return
-		}
-		h.streamHandler(w, r)
-	})
-	return mux
 }
 
 // streamHandler streams the replay buffer followed by live output as
@@ -397,39 +408,7 @@ func exitCodeOf(err error) int {
 }
 
 // ---------------------------------------------------------------------------
-// startup banner
-
-func printBanner(cfg *config, tunnel *Tunnel) {
-	localURL := fmt.Sprintf("http://localhost:%d", cfg.port)
-	tsIP := tailscaleIP()
-
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "  Stream ready!")
-	fmt.Fprintf(os.Stderr, "  Local:     %s\n", localURL)
-	if tsIP != "" {
-		fmt.Fprintf(os.Stderr, "  Tailscale: http://%s:%d\n", tsIP, cfg.port)
-	}
-
-	if cfg.public {
-		t, url, err := startTunnel(cfg.provider, cfg.port)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "  Public:    (failed: %v)\n", err)
-		} else {
-			*tunnel = t
-			fmt.Fprintf(os.Stderr, "  Public:    %s\n", url)
-			fmt.Fprintf(os.Stderr, "\n  Terminal:  open %s in a browser\n", url)
-			fmt.Fprintf(os.Stderr, "  Viewers:   curl -N %s\n\n", url)
-			return
-		}
-	}
-
-	viewer := localURL
-	if tsIP != "" {
-		viewer = fmt.Sprintf("http://%s:%d", tsIP, cfg.port)
-	}
-	fmt.Fprintf(os.Stderr, "\n  Terminal:  open %s in a browser\n", viewer)
-	fmt.Fprintf(os.Stderr, "  Viewers:   curl -N %s\n\n", viewer)
-}
+// tailscale helpers (used by the banner and the tunnel providers)
 
 func tailscaleIP() string {
 	out, err := exec.Command("tailscale", "ip", "-4").Output()

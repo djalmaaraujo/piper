@@ -37,6 +37,7 @@ Now `curl -N http://localhost:9999` from another machine (or open it in a browse
 ## Features
 
 - **Single static binary** — written in Go, zero runtime dependencies. No Node, no Python, nothing to install alongside it.
+- **Run several at once** — every piper gets a unique id and shares one port. The first to start hosts the server; the rest attach to it automatically (no daemon, no port juggling). `piper --list` shows what's running.
 - **Browser view** — open the URL in a browser for a dark, auto-scrolling log page (a tiny dependency-free HTML page embedded in the binary). `curl` still gets the raw stream.
 - **Stream live output** — every line of stdout/stderr is broadcast to all connected viewers as it happens.
 - **Real TTY, no buffering** — runs your command under `script(1)` so colors and progress bars render and output isn't stuck in a pipe buffer.
@@ -76,9 +77,22 @@ piper --public <command>        # also share publicly (auto-detect a tunnel)
 piper --tailscale <command>     # force Tailscale Funnel
 piper --cloudflared <command>   # force a Cloudflare quick tunnel (no account)
 piper --ngrok <command>         # force ngrok
-piper --port 8080 <command>     # listen on a custom port
+piper --port 8080 <command>     # share on a custom port
+piper --list                    # list pipers running on this machine
 <command> | piper               # pipe mode (reads stdin)
 ```
+
+### Running several at once
+
+Just run `piper` again — it won't clash. Each instance gets a unique id and is served on the same port:
+
+```
+http://localhost:9999/USHS82          # browser (terminal-style log page)
+curl -N http://localhost:9999/USHS82  # raw stream
+http://localhost:9999/                # index of everything running
+```
+
+The first piper to start owns the HTTP server (the "host"); later ones attach to it and push their output over loopback. If the host exits, another instance takes over the port automatically. Running pipers are tracked in `~/piper-config.json`; hitting an id that isn't running returns a friendly *broken pipe* page.
 
 ### Public sharing
 

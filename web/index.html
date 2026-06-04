@@ -73,9 +73,12 @@
       if (stick) log.scrollTop = log.scrollHeight;
     }
 
+    // This page is served at /<id>; stream lives at /<id>/stream.
+    const base = location.pathname.replace(/\/+$/, "");
+
     async function connect() {
       try {
-        const res = await fetch("/stream", { headers: { Accept: "text/plain" } });
+        const res = await fetch(base + "/stream", { headers: { Accept: "text/plain" } });
         if (!res.ok || !res.body) throw new Error("bad response");
         setState(true, "connected");
         const reader = res.body.getReader();
