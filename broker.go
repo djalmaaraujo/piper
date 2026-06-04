@@ -541,9 +541,13 @@ const indexHTML = `<!doctype html><html lang="en"><head>
   .role { color:#6366f1; margin-left:8px; }
   .cmd { color:#94a3b8; margin-left:8px; }
   .empty { color:#64748b; border-style:dashed; }
+  #brand { position:fixed; bottom:12px; right:12px; opacity:.4; transition:opacity .15s; }
+  #brand:hover { opacity:.9; }
+  #brand img { height:48px; display:block; }
 </style></head><body>
 <h1>piper</h1><p class="sub">streams running on this machine</p>
 <ul>%s</ul>
+<a id="brand" href="https://github.com/djalmaaraujo/piper" target="_blank" rel="noopener" title="piper on GitHub"><img alt="piper" src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTgwIiBoZWlnaHQ9IjE4MCIgdmlld0JveD0iMTAgMjAgMTgwIDE4MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IlBpcGVyIGljb24iPgogIDxkZWZzPgogICAgPGxpbmVhckdyYWRpZW50IGlkPSJwaXBlR3JhZCIgeDE9IjAiIHkxPSIwIiB4Mj0iMSIgeTI9IjEiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAlIiBzdG9wLWNvbG9yPSIjMjJkM2VlIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMTAwJSIgc3RvcC1jb2xvcj0iIzYzNjZmMSIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0iYmdHcmFkIiB4MT0iMCIgeTE9IjAiIHgyPSIxIiB5Mj0iMSI+CiAgICAgIDxzdG9wIG9mZnNldD0iMCUiIHN0b3AtY29sb3I9IiMwZjE3MmEiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxMDAlIiBzdG9wLWNvbG9yPSIjMWUxYjRiIi8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogIDwvZGVmcz4KCiAgPHJlY3QgeD0iMjAiIHk9IjMwIiB3aWR0aD0iMTYwIiBoZWlnaHQ9IjE2MCIgcng9IjI4IiBmaWxsPSJ1cmwoI2JnR3JhZCkiIHN0cm9rZT0idXJsKCNwaXBlR3JhZCkiIHN0cm9rZS13aWR0aD0iNCIvPgoKICA8IS0tIHByb21wdCBjaGV2cm9uIC0tPgogIDxwYXRoIGQ9Ik01OCA4NiBMODYgMTEwIEw1OCAxMzQiIHN0cm9rZT0idXJsKCNwaXBlR3JhZCkiIHN0cm9rZS13aWR0aD0iMTEiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgZmlsbD0ibm9uZSIvPgoKICA8IS0tIHN0cmVhbWluZyBwaXBlOiB2ZXJ0aWNhbCBiYXIgd2l0aCBmbG93aW5nIGRvdHMgLS0+CiAgPHJlY3QgeD0iMTA0IiB5PSI4NCIgd2lkdGg9IjEyIiBoZWlnaHQ9IjUyIiByeD0iNiIgZmlsbD0idXJsKCNwaXBlR3JhZCkiLz4KICA8Y2lyY2xlIGN4PSIxMzIiIGN5PSIxMTAiIHI9IjciIGZpbGw9IiMyMmQzZWUiLz4KICA8Y2lyY2xlIGN4PSIxNTAiIGN5PSIxMTAiIHI9IjUiIGZpbGw9IiMzOGJkZjgiIG9wYWNpdHk9IjAuNyIvPgogIDxjaXJjbGUgY3g9IjE2NCIgY3k9IjExMCIgcj0iMy41IiBmaWxsPSIjNjM2NmYxIiBvcGFjaXR5PSIwLjUiLz4KPC9zdmc+Cg=="></a>
 </body></html>`
 
 const brokenPipeHTML = `<!doctype html><html lang="en"><head>
