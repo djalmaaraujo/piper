@@ -25,14 +25,16 @@ piper npm run build
 ```
 
 ```
-  Stream ready!
-  Local:     http://localhost:9999
-  Tailscale: http://100.x.y.z:9999
+  Stream ready!  id QGNABD  (host)
+  Local:     http://localhost:9999/QGNABD
+  Tailscale: http://100.x.y.z:9999/QGNABD
 
-  Viewers:   curl -N http://100.x.y.z:9999
+  Terminal:  open http://100.x.y.z:9999/QGNABD in a browser
+  Viewers:   curl -N http://100.x.y.z:9999/QGNABD
+  Tip:       run with --manager to view multiple pipes at http://100.x.y.z:9999/
 ```
 
-Now `curl -N http://localhost:9999` from another machine (or open it in a browser) and watch the build scroll by.
+Now `curl -N http://100.x.y.z:9999/QGNABD` from another machine (or open it in a browser) and watch the build scroll by.
 
 ## Features
 
@@ -126,11 +128,13 @@ piper --port 8080 pytest -v
 
 ### Viewing a stream
 
+Each stream has its own id (shown in the banner). Use it in the URL:
+
 ```bash
-curl -N http://localhost:9999      # -N disables curl buffering
+curl -N http://localhost:9999/QGNABD   # -N disables curl buffering
 ```
 
-…or just open the URL in a browser.
+…or just open the URL in a browser for the log page.
 
 ## How it works
 
@@ -174,6 +178,7 @@ Open another terminal and `curl -N http://localhost:9999` to see the stream.
 
 ```bash
 go vet ./...        # static checks
+go test ./...       # unit tests
 go build ./...      # compile
 ```
 
@@ -181,9 +186,13 @@ go build ./...      # compile
 
 | File | Purpose |
 |------|---------|
-| `main.go` | flags, HTTP fan-out hub, command/pipe sources, startup banner |
+| `main.go` | flags, the fan-out hub + replay buffer, command/pipe sources |
+| `broker.go` | host/guest roles, port selection, HTTP routing, index, banner |
+| `ids.go` | unique stream id generation |
+| `state.go` | `~/piper-config.json` + `piper --list` |
 | `tunnels.go` | `Tunnel` interface + Tailscale / Cloudflare / ngrok providers |
-| `util.go` | TTY detection, listener helper |
+| `web/index.html` | the embedded browser log page (no third-party JS) |
+| `util.go` | TTY detection |
 | `.goreleaser.yaml` | release archives, checksums, Homebrew cask |
 
 ### Adding a tunnel provider
