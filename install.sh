@@ -32,10 +32,12 @@ esac
 
 ASSET="piper_${goos}_${goarch}.tar.gz"
 if [ "$VERSION" = "latest" ]; then
-  URL="https://github.com/${REPO}/releases/latest/download/${ASSET}"
+  BASE="https://github.com/${REPO}/releases/latest/download"
 else
-  URL="https://github.com/${REPO}/releases/download/${VERSION}/${ASSET}"
+  BASE="https://github.com/${REPO}/releases/download/${VERSION}"
 fi
+URL="${BASE}/${ASSET}"
+CHECKSUMS_URL="${BASE}/checksums.txt"
 
 # --- choose a writable install dir -------------------------------------------
 choose_dir() {
@@ -50,16 +52,45 @@ mkdir -p "$INSTALL_DIR"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
+fetch() { # fetch <url> <dest>
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$1" -o "$2"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$2" "$1"
+  else
+    echo "Error: need curl or wget." >&2; exit 1
+  fi
+}
+
 echo "Downloading ${ASSET} (${VERSION})..."
-if command -v curl >/dev/null 2>&1; then
-  curl -fsSL "$URL" -o "$tmp/piper.tar.gz"
-elif command -v wget >/dev/null 2>&1; then
-  wget -qO "$tmp/piper.tar.gz" "$URL"
+fetch "$URL" "$tmp/$ASSET"
+
+# --- verify checksum ---------------------------------------------------------
+# The release ships a checksums.txt; verify the archive before trusting it.
+if fetch "$CHECKSUMS_URL" "$tmp/checksums.txt" 2>/dev/null; then
+  expected="$(grep " ${ASSET}\$" "$tmp/checksums.txt" | awk '{print $1}')"
+  if [ -z "$expected" ]; then
+    echo "Error: ${ASSET} not found in checksums.txt." >&2; exit 1
+  fi
+  if command -v sha256sum >/dev/null 2>&1; then
+    actual="$(sha256sum "$tmp/$ASSET" | awk '{print $1}')"
+  elif command -v shasum >/dev/null 2>&1; then
+    actual="$(shasum -a 256 "$tmp/$ASSET" | awk '{print $1}')"
+  else
+    echo "Error: need sha256sum or shasum to verify the download." >&2; exit 1
+  fi
+  if [ "$expected" != "$actual" ]; then
+    echo "Error: checksum mismatch for ${ASSET}." >&2
+    echo "  expected $expected" >&2
+    echo "  actual   $actual" >&2
+    exit 1
+  fi
+  echo "✓ Checksum verified"
 else
-  echo "Error: need curl or wget." >&2; exit 1
+  echo "Error: could not download checksums.txt to verify the release." >&2; exit 1
 fi
 
-tar -xzf "$tmp/piper.tar.gz" -C "$tmp"
+tar -xzf "$tmp/$ASSET" -C "$tmp"
 install -m 0755 "$tmp/piper" "$INSTALL_DIR/piper"
 
 echo "✓ Installed piper to ${INSTALL_DIR}/piper"
