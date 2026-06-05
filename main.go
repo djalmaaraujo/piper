@@ -25,8 +25,9 @@ import (
 
 const (
 	defaultPort   = 9999
-	replayLines   = 100 // recent lines replayed to late-joining viewers
-	clientBufSize = 256 // per-client chunk queue; slow clients are dropped
+	replayLines   = 100     // recent lines replayed to late-joining viewers
+	clientBufSize = 256     // per-client chunk queue; slow clients are dropped
+	maxPartial    = 1 << 20 // cap on the trailing no-newline replay fragment (1 MiB)
 )
 
 // version is set at build time via -ldflags "-X main.version=...".
@@ -55,7 +56,14 @@ func main() {
 		os.Exit(0)
 	}
 
-	id := genID()
+	// A local-only stream sits behind loopback, so a short, friendly id is fine.
+	// Once the port is exposed (--lan or a public tunnel) the id is the ONLY
+	// access control, so make it a long, unguessable bearer token.
+	idLen := 8
+	if cfg.public || cfg.lan {
+		idLen = 24
+	}
+	id := genID(idLen)
 	hub := newHub(replayLines) // local hub: mirrors to our terminal + serves replay
 	if cfg.screen {
 		// MJPEG frames are binary: don't mirror to the terminal or buffer lines.
@@ -95,14 +103,15 @@ func main() {
 // args
 
 type config struct {
-	port     int
-	command  []string
+	port        int
+	command     []string
 	pipe        bool
 	help        bool
 	showVersion bool
 	list        bool   // --list: show running pipers
 	manager     bool   // --manager: enable the web index of running streams
 	public      bool   // expose via a tunnel
+	lan         bool   // --lan: bind all interfaces so LAN/Tailscale peers can reach
 	provider    string // forced provider name, or "" for auto-detect
 
 	screen      bool   // `piper screen`: share a window as MJPEG
@@ -133,8 +142,13 @@ func parseArgs(argv []string) (*config, error) {
 	}
 
 	var rest []string
+loop:
 	for i := 0; i < len(argv); i++ {
 		switch argv[i] {
+		case "--":
+			// Explicit end of piper's flags; everything after is the command.
+			rest = argv[i+1:]
+			break loop
 		case "-h", "--help":
 			c.help = true
 		case "--version":
@@ -143,6 +157,8 @@ func parseArgs(argv []string) (*config, error) {
 			c.list = true
 		case "--manager":
 			c.manager = true
+		case "--lan":
+			c.lan = true
 		case "--list-windows":
 			c.listWindows = true
 		case "--window":
@@ -197,7 +213,11 @@ func parseArgs(argv []string) (*config, error) {
 			c.port = p
 			i++
 		default:
-			rest = append(rest, argv[i])
+			// First non-flag token starts the command. Stop parsing piper
+			// flags here so the command's own arguments (e.g. `mycmd --public`)
+			// can never be mistaken for piper flags and silently change behavior.
+			rest = argv[i:]
+			break loop
 		}
 	}
 
@@ -236,6 +256,7 @@ func printUsage(w io.Writer) {
 
 Usage:
   piper <command>              run a command and stream its output
+  piper --lan <command>        also reach it from other devices on your network
   piper --public <command>     also expose publicly (auto-detect a tunnel)
   piper --tailscale <command>  force Tailscale Funnel
   piper --cloudflared <cmd>    force a Cloudflare quick tunnel (no account)
@@ -246,6 +267,10 @@ Usage:
   piper screen "<window>"      share a macOS window as a live image (MJPEG)
   piper screen --list-windows  list shareable windows
   <command> | piper            pipe mode (reads stdin)
+
+piper flags must come BEFORE the command; anything after the command (or
+after --) belongs to the command. By default the stream is bound to
+localhost only — use --lan or --public to expose it on the network.
 
 Screen options:  --fps <n> (default 5)   --scale <px width> (0 = native)
 
@@ -333,6 +358,12 @@ func (h *hub) appendReplay(chunk []byte) {
 		line := append([]byte(nil), data[:i+1]...)
 		h.lines = append(h.lines, line)
 		data = data[i+1:]
+	}
+	// Bound the trailing no-newline fragment so a source that emits a huge line
+	// without a '\n' can't grow this buffer (and every new viewer's snapshot)
+	// without limit. Keep only the most recent maxPartial bytes.
+	if len(data) > maxPartial {
+		data = data[len(data)-maxPartial:]
 	}
 	h.partial = append([]byte(nil), data...)
 	if len(h.lines) > h.maxLines {

@@ -4,7 +4,7 @@
 
 <p align="center">
   <strong>Stream any command's output live over HTTP.</strong><br>
-  Watch a long build, a deploy, or a test run from a browser or <code>curl</code> — on your LAN, or the public internet via Tailscale, Cloudflare, or ngrok.
+  Watch a long build, a deploy, or a test run from a browser or <code>curl</code> — locally by default, on your LAN with <code>--lan</code>, or the public internet via Tailscale, Cloudflare, or ngrok.
 </p>
 
 <p align="center">
@@ -29,16 +29,16 @@ piper ping google.com
 ```
 
 ```
-  Stream ready!  id QGNABD  (host)
-  Local:     http://localhost:9999/QGNABD
-  Tailscale: http://100.x.y.z:9999/QGNABD
+  Stream ready!  id QGNABDK7  (host)
+  Local:     http://localhost:9999/QGNABDK7
+  (local only — add --lan to reach this from other devices)
 
-  Terminal:  open http://100.x.y.z:9999/QGNABD in a browser
-  Viewers:   curl -N http://100.x.y.z:9999/QGNABD
-  Tip:       run with --manager to view multiple pipes at http://100.x.y.z:9999/
+  Terminal:  open http://localhost:9999/QGNABDK7 in a browser
+  Viewers:   curl -N http://localhost:9999/QGNABDK7
+  Tip:       run with --manager to view multiple pipes at http://localhost:9999/
 ```
 
-Now `curl -N http://100.x.y.z:9999/QGNABD` from another machine (or open it in a browser) and watch it stream live, line by line.
+Open `http://localhost:9999/QGNABDK7` in a browser (or `curl -N` it) and watch it stream live, line by line. To reach it from another machine, add `--lan` (LAN / Tailscale) or a tunnel — see [Public sharing](#public-sharing).
 
 <p align="center">
   <img src="assets/screenshot-logs.png" alt="piper log stream in the browser" width="640">
@@ -55,7 +55,7 @@ Now `curl -N http://100.x.y.z:9999/QGNABD` from another machine (or open it in a
 - **Multiple viewers** — connect as many curl/browser clients as you want; slow clients are dropped instead of stalling everyone.
 - **Replay buffer** — late joiners immediately get the last 100 lines, then keep streaming.
 - **Pluggable public sharing** — `--public` auto-detects an installed tunnel; or force one with `--tailscale`, `--cloudflared`, or `--ngrok`.
-- **LAN sharing out of the box** — auto-detects your Tailscale IP and prints a ready-to-share URL.
+- **Private by default, LAN with one flag** — streams bind to `localhost` only; add `--lan` to reach them from other devices (and to print your Tailscale IP as a ready-to-share URL).
 - **Health check** — `GET /health` returns `ok` for uptime probes.
 - **Custom port** — `--port 8080` or `PORT=8080`.
 
@@ -82,7 +82,8 @@ Grab a binary from the [Releases page](https://github.com/djalmaaraujo/piper/rel
 ## Usage
 
 ```bash
-piper <command>                 # run a command and stream its output
+piper <command>                 # run a command and stream its output (localhost only)
+piper --lan <command>           # also reach it from other devices on your network
 piper --public <command>        # also share publicly (auto-detect a tunnel)
 piper --tailscale <command>     # force Tailscale Funnel
 piper --cloudflared <command>   # force a Cloudflare quick tunnel (no account)
@@ -94,13 +95,17 @@ piper screen "<window name>"    # share a macOS window as a live image
 <command> | piper               # pipe mode (reads stdin)
 ```
 
+piper flags go **before** the command; anything after the command (or after `--`)
+is passed to the command. So `piper npm run build --tailscale` runs
+`npm run build --tailscale` locally — put `--tailscale` first to tunnel.
+
 ### Running several at once
 
 Just run `piper` again — it won't clash. Each instance gets a unique id and is served on the same port:
 
 ```
-http://localhost:9999/USHS82          # browser (terminal-style log page)
-curl -N http://localhost:9999/USHS82  # raw stream
+http://localhost:9999/USHS82QK          # browser (terminal-style log page)
+curl -N http://localhost:9999/USHS82QK  # raw stream
 ```
 
 The index of everything running (`http://localhost:9999/`) is **disabled by default** so a viewer can't enumerate your streams — you need the id to reach one. Start any piper with `--manager` to enable the index page.
@@ -142,13 +147,13 @@ Run with no name and piper pops a **native window picker** (a macOS list dialog)
 | Cloudflare | `--cloudflared` | [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) installed — **quick tunnels need no account** |
 | ngrok | `--ngrok` | [`ngrok`](https://ngrok.com) installed + `ngrok config add-authtoken <token>` once |
 
-> **Heads-up:** `--public` exposes your command's output to the internet. Don't stream logs that contain secrets.
+> **Heads-up:** `--public` exposes the **whole port** — every piper sharing it, not just this one — to the internet, unauthenticated. Don't stream logs that contain secrets.
 
 ### Examples
 
 ```bash
-# Watch a build from your phone on the same Tailnet
-piper npm run build
+# Watch a build from your phone on the same LAN / Tailnet
+piper --lan npm run build
 
 # Share a deploy log with a teammate, no account needed
 piper --cloudflared ./deploy.sh
@@ -165,7 +170,7 @@ piper --port 8080 pytest -v
 Each stream has its own id (shown in the banner). Use it in the URL:
 
 ```bash
-curl -N http://localhost:9999/QGNABD   # -N disables curl buffering
+curl -N http://localhost:9999/QGNABDK7   # -N disables curl buffering
 ```
 
 …or just open the URL in a browser for the log page.
@@ -208,7 +213,7 @@ go build -o piper .
 ./piper echo "hello from piper"
 ```
 
-Open another terminal and `curl -N http://localhost:9999` to see the stream.
+Open another terminal and `curl -N http://localhost:9999/<id>` (the id is printed in the banner) to see the stream. Plain `/` is the stream index, which is disabled unless you pass `--manager`.
 
 ```bash
 go vet ./...        # static checks
@@ -225,7 +230,11 @@ go build ./...      # compile
 | `ids.go` | unique stream id generation |
 | `state.go` | `~/piper-config.json` + `piper --list` |
 | `tunnels.go` | `Tunnel` interface + Tailscale / Cloudflare / ngrok providers |
+| `screen_darwin.go` | macOS window capture → MJPEG (`piper screen`) |
+| `screen_other.go` | non-macOS stub (screen sharing unsupported) |
+| `web.go` | `go:embed` of the browser pages + asset serving |
 | `web/index.html` | the embedded browser log page (no third-party JS) |
+| `web/screen.html` | the embedded MJPEG viewer page (no third-party JS) |
 | `util.go` | TTY detection |
 | `.goreleaser.yaml` | release archives, checksums, Homebrew cask |
 
@@ -240,8 +249,8 @@ Implement the `Tunnel` interface in `tunnels.go` (`Name`, `Available`, `Start`, 
 3. Test both modes:
    ```bash
    go run . bash -c 'for i in 1 2 3; do echo line $i; sleep 1; done'
-   # in another shell:
-   curl -N http://localhost:9999
+   # in another shell (id from the banner):
+   curl -N http://localhost:9999/<id>
    ```
 4. Run `go vet ./...` and confirm cross-compilation: `GOOS=linux go build -o /dev/null .`
 5. Open a pull request describing what changed and why.

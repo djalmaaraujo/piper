@@ -40,15 +40,28 @@ binary. Keep it small, readable, and boring.
 
 ## Security
 
+- **Loopback by default.** The TCP server binds `127.0.0.1` — reachable only
+  from this machine. `--lan` (or `--public`, which needs it) widens the bind to
+  `0.0.0.0`. `bindHost(cfg)` is the single source of truth.
+- **piper flags must precede the command.** `parseArgs` stops consuming piper
+  flags at the first non-flag token (and at `--`), so a command's own args
+  (`mycmd --public`) can never silently flip on a tunnel.
 - The TCP port is **read-only**: non-GET/HEAD requests get 405. There is **no
   network write surface** — output is fed only by a same-user local process over
-  the unix socket.
-- The web index (`/`) lists every running stream, so it's an enumeration
-  surface — **off by default**, returns 404. A user opts in per run with
-  `--manager`; while any running piper has it, `/` is served.
-- State and socket files are `0600`.
-- `--public` (tunnels) exposes the *whole* port to the internet. Don't stream
-  secrets; the page/stream is unauthenticated.
+  the unix socket. The HTTP server sets `ReadHeaderTimeout`/`IdleTimeout`/
+  `MaxHeaderBytes` to blunt Slowloris-style DoS.
+- **Stream id is the only access control.** Local ids are 8 chars (friendly);
+  exposed ids (`--lan`/`--public`) are 24 chars (~118-bit bearer token), drawn
+  with rejection sampling so every char is uniform. `/info` deliberately omits
+  the command line (args may carry secrets).
+- The web index (`/`) is an enumeration surface — **off by default**, returns
+  404. `--manager` opts in, and the index lists **only** streams that themselves
+  set `--manager`, never co-located ones that didn't.
+- State and socket files are `0600`; the socket lives in a `0700` `~/.piper/`
+  dir. The host refuses to serve if it can't lock the socket down.
+- `--public` (tunnels) exposes the *whole* port to the internet, unauthenticated
+  — every piper sharing it, not just the one you ran. Don't stream secrets; the
+  banner warns at startup.
 
 ## Browser page
 

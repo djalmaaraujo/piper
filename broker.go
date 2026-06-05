@@ -49,14 +49,19 @@ func newRegistry(port int) *registry {
 	return &registry{port: port, streams: map[string]*stream{}}
 }
 
-func (rg *registry) add(s *stream) {
+// add registers a stream, returning false if the id is already taken. Refusing
+// to overwrite stops a local process from hijacking an existing stream's id by
+// re-registering it over the control socket.
+func (rg *registry) add(s *stream) bool {
 	rg.mu.Lock()
-	if _, ok := rg.streams[s.id]; !ok {
-		rg.order = append(rg.order, s.id)
+	defer rg.mu.Unlock()
+	if _, ok := rg.streams[s.id]; ok {
+		return false
 	}
+	rg.order = append(rg.order, s.id)
 	rg.streams[s.id] = s
 	rg.persistLocked()
-	rg.mu.Unlock()
+	return true
 }
 
 func (rg *registry) remove(id string) {
@@ -159,9 +164,12 @@ func (rg *registry) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case len(parts) == 2 && parts[1] == "stream":
 		st.hub.streamHandler(w, r)
 	case len(parts) == 2 && parts[1] == "info":
+		// Deliberately omit the command line: anyone with the stream id can
+		// reach /info, and command args may carry tokens, paths, or URLs.
+		// The browser page only needs id + started.
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"id": st.id, "started": st.started, "cmd": st.cmd, "role": st.role,
+			"id": st.id, "started": st.started, "role": st.role,
 		})
 	case len(parts) == 1:
 		if wantsHTML(r) {
@@ -203,11 +211,16 @@ func acceptGuests(ul net.Listener, rg *registry) {
 
 func handleGuestConn(conn net.Conn, rg *registry) {
 	defer conn.Close()
-	br := bufio.NewReader(conn)
+	// Cap the header line so a malformed/hostile local client can't make us
+	// buffer unbounded bytes before the first newline. Lift the cap once the
+	// header is parsed so the stream body that follows can flow freely.
+	lr := &io.LimitedReader{R: conn, N: 64 << 10}
+	br := bufio.NewReader(lr)
 	line, err := br.ReadString('\n')
 	if err != nil {
 		return
 	}
+	lr.N = 1 << 62
 	var hdr guestHeader
 	if json.Unmarshal([]byte(line), &hdr) != nil || !validID(hdr.ID) {
 		return
@@ -226,7 +239,9 @@ func handleGuestConn(conn net.Conn, rg *registry) {
 		id: hdr.ID, cmd: hdr.Cmd, pid: hdr.PID, role: "guest",
 		started: hdr.Started, manager: hdr.Manager, kind: kind, hub: hb,
 	}
-	rg.add(st)
+	if !rg.add(st) {
+		return // id already in use — refuse rather than hijack it
+	}
 	defer rg.remove(hdr.ID)
 
 	buf := make([]byte, 32*1024)
@@ -243,7 +258,16 @@ func handleGuestConn(conn net.Conn, rg *registry) {
 }
 
 func (rg *registry) serveIndex(w http.ResponseWriter, r *http.Request) {
+	// Only list streams that opted into the index. A piper started without
+	// --manager is never exposed here just because another one enabled it.
 	streams := rg.list()
+	shown := streams[:0:0]
+	for _, s := range streams {
+		if s.manager {
+			shown = append(shown, s)
+		}
+	}
+	streams = shown
 	if !wantsHTML(r) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		if len(streams) == 0 {
@@ -294,13 +318,25 @@ func (rg *registry) serveBrokenPipe(w http.ResponseWriter, r *http.Request, id s
 // ---------------------------------------------------------------------------
 // roles
 
+// bindHost is the interface piper's TCP server binds to. Loopback by default so
+// streams are reachable only from this machine; widened to all interfaces only
+// when the user explicitly opts into network exposure (--lan, or a public
+// tunnel that needs to reach the port).
+func bindHost(cfg *config) string {
+	if cfg.lan || cfg.public {
+		return "0.0.0.0"
+	}
+	return "127.0.0.1"
+}
+
 // publish keeps this piper reachable on a shared port for its whole life.
 func publish(cfg *config, id string, h *hub) {
+	host := bindHost(cfg)
 	for {
 		if h.isClosed() {
 			return // our source already ended; nothing to publish
 		}
-		port, ln := claimPort(cfg.port)
+		port, ln := claimPort(host, cfg.port)
 		if ln != nil {
 			becomeHost(ln, cfg, port, id, h) // blocks until the process exits
 			return
@@ -322,13 +358,13 @@ func publish(cfg *config, id string, h *hub) {
 //
 // Every piper scans the same sequence, so they all converge on the same port
 // even when the default is taken by an unrelated process.
-func claimPort(start int) (int, net.Listener) {
+func claimPort(host string, start int) (int, net.Listener) {
 	const span = 64
 	for p := start; p < start+span; p++ {
 		if p < 1 || p > 65535 {
 			break
 		}
-		ln, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", p))
+		ln, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, p))
 		if err == nil {
 			return p, ln // free — host here
 		}
@@ -351,15 +387,16 @@ func piperHostAt(p int) bool {
 	return true
 }
 
-// socketPath is the host's local control socket for this port. It lives in the
-// user's home dir with 0600 perms, so only the same user can connect — and it's
-// not reachable over the network at all.
+// socketPath is the host's local control socket for this port. It lives in a
+// 0700 per-user dir (~/.piper) with 0600 perms, so only the same user can
+// connect — and it's not reachable over the network at all. Every piper derives
+// the same path, so guests and the host agree without coordination.
 func socketPath(port int) string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = os.TempDir()
 	}
-	return filepath.Join(home, fmt.Sprintf(".piper-%d.sock", port))
+	return filepath.Join(home, ".piper", fmt.Sprintf("%d.sock", port))
 }
 
 func becomeHost(ln net.Listener, cfg *config, port int, id string, h *hub) {
@@ -370,21 +407,40 @@ func becomeHost(ln net.Listener, cfg *config, port int, id string, h *hub) {
 	})
 
 	// Local unix socket for guests. Winning the TCP bind makes us the authority,
-	// so it's safe to clear a stale socket file left by a previous host.
+	// so it's safe to clear a stale socket file left by a previous host. The
+	// socket lives in a 0700 dir owned by us, so even during the brief window
+	// before Chmod no other user can connect.
 	sp := socketPath(port)
+	os.MkdirAll(filepath.Dir(sp), 0o700)
 	os.Remove(sp)
 	if ul, err := net.Listen("unix", sp); err == nil {
-		os.Chmod(sp, 0o600)
-		hostMu.Lock()
-		hostSock = sp
-		hostMu.Unlock()
-		go acceptGuests(ul, rg)
-		defer func() { ul.Close(); os.Remove(sp) }()
+		if cerr := os.Chmod(sp, 0o600); cerr != nil {
+			// Couldn't lock the socket down — refuse rather than expose a
+			// writable control channel to other local users.
+			ul.Close()
+			os.Remove(sp)
+			fmt.Fprintf(os.Stderr, "  Error: cannot secure control socket: %v\n", cerr)
+		} else {
+			hostMu.Lock()
+			hostSock = sp
+			hostMu.Unlock()
+			go acceptGuests(ul, rg)
+			defer func() { ul.Close(); os.Remove(sp) }()
+		}
 	}
 
 	tunnelURL := startTunnelOnce(cfg, port)
-	printBanner(port, id, "host", cfg.manager, tunnelURL)
-	srv := &http.Server{Handler: rg}
+	printBanner(port, id, "host", cfg.manager, tunnelURL, bindHost(cfg))
+	// Timeouts blunt slow-client / half-open connection (Slowloris) DoS. The
+	// stream itself is long-lived, so we can't cap the write deadline, but we
+	// can bound how long a client may dawdle sending its request headers and
+	// how large those headers may be.
+	srv := &http.Server{
+		Handler:           rg,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 16,
+	}
 	_ = srv.Serve(ln)
 }
 
@@ -403,7 +459,7 @@ func becomeGuest(cfg *config, port int, id string, h *hub) error {
 	}
 
 	tunnelURL := startTunnelOnce(cfg, port)
-	printBanner(port, id, "guest", cfg.manager, tunnelURL)
+	printBanner(port, id, "guest", cfg.manager, tunnelURL, bindHost(cfg))
 
 	ch, snap := h.register()
 	defer h.unregister(ch)
@@ -490,19 +546,27 @@ func cleanup() {
 // ---------------------------------------------------------------------------
 // banner
 
-func printBanner(port int, id, role string, manager bool, tunnelURL string) {
+func printBanner(port int, id, role string, manager bool, tunnelURL, host string) {
 	base := fmt.Sprintf("http://localhost:%d", port)
-	tsIP := tailscaleIP()
+	wide := host == "0.0.0.0" // bound on all interfaces (LAN/Tailscale reachable)
 	w := os.Stderr
 
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "  Stream ready!  id %s  (%s)\n", id, role)
 	fmt.Fprintf(w, "  Local:     %s/%s\n", base, id)
-	if tsIP != "" {
-		fmt.Fprintf(w, "  Tailscale: http://%s:%d/%s\n", tsIP, port, id)
+	tsIP := ""
+	if wide {
+		// Only advertise network-reachable URLs when we actually bound wide.
+		if tsIP = tailscaleIP(); tsIP != "" {
+			fmt.Fprintf(w, "  Tailscale: http://%s:%d/%s\n", tsIP, port, id)
+		}
 	}
 	if tunnelURL != "" {
 		fmt.Fprintf(w, "  Public:    %s/%s\n", tunnelURL, id)
+		fmt.Fprintf(w, "  ⚠  Public exposes the WHOLE port %d — every piper sharing it,\n", port)
+		fmt.Fprintf(w, "     unauthenticated, to the internet. Don't stream secrets.\n")
+	} else if !wide {
+		fmt.Fprintf(w, "  (local only — add --lan to reach this from other devices)\n")
 	}
 	// pick the most shareable root for the viewer URLs
 	root := base

@@ -16,7 +16,7 @@ import (
 // the only "dependencies", and they're optional and user-installed.
 type Tunnel interface {
 	Name() string
-	Available() bool         // CLI present (and, where relevant, configured)
+	Available() bool                // CLI present (and, where relevant, configured)
 	Start(port int) (string, error) // begin tunneling, return the public URL
 	Stop()
 }
@@ -122,7 +122,7 @@ type cloudflaredTunnel struct{ cmd *exec.Cmd }
 
 var cfURLRe = regexp.MustCompile(`https://[a-zA-Z0-9.-]+\.trycloudflare\.com`)
 
-func (c *cloudflaredTunnel) Name() string  { return "cloudflared" }
+func (c *cloudflaredTunnel) Name() string    { return "cloudflared" }
 func (c *cloudflaredTunnel) Available() bool { return have("cloudflared") }
 
 func (c *cloudflaredTunnel) Start(port int) (string, error) {
@@ -155,7 +155,7 @@ func (c *cloudflaredTunnel) Stop() { stopProc(c.cmd) }
 
 type ngrokTunnel struct{ cmd *exec.Cmd }
 
-func (n *ngrokTunnel) Name() string   { return "ngrok" }
+func (n *ngrokTunnel) Name() string    { return "ngrok" }
 func (n *ngrokTunnel) Available() bool { return have("ngrok") }
 
 func (n *ngrokTunnel) Start(port int) (string, error) {

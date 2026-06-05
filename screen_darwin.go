@@ -209,8 +209,15 @@ func runScreenSource(cfg *config, h *hub) int {
 		fps = 30
 	}
 
-	tmp := filepath.Join(os.TempDir(), fmt.Sprintf("piper-screen-%d.jpg", os.Getpid()))
-	defer os.Remove(tmp)
+	// Capture into a private 0700 dir (not a predictable /tmp path) so a local
+	// attacker can't pre-create or symlink the frame file out from under us.
+	tmpDir, err := os.MkdirTemp("", "piper-screen-")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  Error: %v\n", err)
+		return 1
+	}
+	defer os.RemoveAll(tmpDir)
+	tmp := filepath.Join(tmpDir, "frame.jpg")
 
 	// Warm up: time one capture so we can report (and not promise) a real rate.
 	// screencapture spawns a process per frame, so that time is the ceiling.

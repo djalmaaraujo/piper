@@ -121,6 +121,43 @@ func TestParseArgs(t *testing.T) {
 		}
 	})
 
+	t.Run("flags after the command go to the command, not piper", func(t *testing.T) {
+		c, err := parseArgs([]string{"echo", "hi", "--public", "--manager"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.public || c.manager {
+			t.Errorf("command's own args leaked into piper flags: public=%v manager=%v", c.public, c.manager)
+		}
+		if !reflect.DeepEqual(c.command, []string{"echo", "hi", "--public", "--manager"}) {
+			t.Errorf("command = %v", c.command)
+		}
+	})
+
+	t.Run("-- ends piper flags", func(t *testing.T) {
+		c, err := parseArgs([]string{"--manager", "--", "echo", "--public"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !c.manager || c.public {
+			t.Errorf("manager=%v public=%v", c.manager, c.public)
+		}
+		if !reflect.DeepEqual(c.command, []string{"echo", "--public"}) {
+			t.Errorf("command = %v", c.command)
+		}
+	})
+
+	t.Run("--lan sets lan and binds wide", func(t *testing.T) {
+		c, _ := parseArgs([]string{"--lan", "echo"})
+		if !c.lan || bindHost(c) != "0.0.0.0" {
+			t.Errorf("lan=%v host=%q", c.lan, bindHost(c))
+		}
+		def, _ := parseArgs([]string{"echo"})
+		if bindHost(def) != "127.0.0.1" {
+			t.Errorf("default host = %q, want loopback", bindHost(def))
+		}
+	})
+
 	t.Run("no command is pipe mode", func(t *testing.T) {
 		c, err := parseArgs(nil)
 		if err != nil {
@@ -259,6 +296,34 @@ func TestHTTPRouting(t *testing.T) {
 		}
 	})
 
+	t.Run("/info does not leak the command line", func(t *testing.T) {
+		resp, err := http.Get(srv.URL + "/ABC123/info")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		if strings.Contains(string(body), "echo hi") || strings.Contains(string(body), "\"cmd\"") {
+			t.Errorf("/info leaked command: %s", body)
+		}
+		if !strings.Contains(string(body), "ABC123") {
+			t.Errorf("/info should still report the id, got %s", body)
+		}
+	})
+
+	t.Run("index lists only --manager streams", func(t *testing.T) {
+		rg.add(&stream{id: "NOIDX0", cmd: "secret-cmd", role: "host", manager: false, hub: newHub(10)})
+		resp, err := http.Get(srv.URL + "/")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		if strings.Contains(string(body), "NOIDX0") || strings.Contains(string(body), "secret-cmd") {
+			t.Errorf("index leaked a non-manager stream: %s", body)
+		}
+	})
+
 	t.Run("browser gets HTML page at /<id>", func(t *testing.T) {
 		req, _ := http.NewRequest("GET", srv.URL+"/ABC123", nil)
 		req.Header.Set("Accept", "text/html")
@@ -318,16 +383,18 @@ func TestHTTPRouting(t *testing.T) {
 }
 
 func TestIDGen(t *testing.T) {
-	seen := map[string]bool{}
-	for i := 0; i < 200; i++ {
-		id := genID()
-		if len(id) != 6 || !validID(id) {
-			t.Fatalf("bad id: %q", id)
+	for _, n := range []int{8, 24} {
+		seen := map[string]bool{}
+		for i := 0; i < 200; i++ {
+			id := genID(n)
+			if len(id) != n || !validID(id) {
+				t.Fatalf("bad id: %q (want len %d)", id, n)
+			}
+			seen[id] = true
 		}
-		seen[id] = true
-	}
-	if len(seen) < 190 { // collisions should be rare
-		t.Errorf("too many collisions: %d unique of 200", len(seen))
+		if len(seen) < 190 { // collisions should be rare
+			t.Errorf("len %d: too many collisions: %d unique of 200", n, len(seen))
+		}
 	}
 }
 
