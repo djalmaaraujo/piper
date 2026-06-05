@@ -240,7 +240,102 @@ go build ./...      # compile
 
 ### Adding a tunnel provider
 
-Implement the `Tunnel` interface in `tunnels.go` (`Name`, `Available`, `Start`, `Stop`) and add it to the list in `startTunnel`. Each provider just shells out to its CLI and reports the public URL.
+A tunnel just takes the local HTTP port and returns a public URL by shelling out
+to a CLI the user already has installed. Everything lives in `tunnels.go`.
+
+**1. Implement the `Tunnel` interface:**
+
+```go
+type Tunnel interface {
+	Name() string                   // provider id, e.g. "bore" (matches the --bore flag)
+	Available() bool                // is the CLI present (and configured)?
+	Start(port int) (string, error) // start tunneling localhost:port, return the public URL
+	Stop()                          // kill the process and undo any global state
+}
+```
+
+Contract for each method:
+
+- **`Name()`** — lowercase id. It's what `--<name>` and the auto-detect loop match on.
+- **`Available()`** — cheap, no side effects. Return false if the CLI is missing
+  *or* not usable, so auto-detect skips it. Use the `have("<bin>")` helper; check
+  config too where it matters (Tailscale, for example, also confirms a Funnel
+  hostname resolves before claiming it's available).
+- **`Start(port)`** — launch the CLI in the background and return the `https://…`
+  URL. Two patterns, both already in the file:
+  - **URL printed on stderr/stdout** → use `scanForURL(reader, regexp)`, which
+    reads lines in the background and returns the first match on a channel; pair
+    it with a `select { case url := <-…: case <-time.After(timeout): }` so you
+    never hang (see `cloudflaredTunnel`).
+  - **URL from a local API** → poll it until it appears (see `ngrokTunnel`, which
+    hits ngrok's `127.0.0.1:4040` API).
+  - **URL is deterministic** → just return it (see `tailscaleTunnel`, which
+    derives it from the tailnet hostname).
+  Keep the started `*exec.Cmd` on the struct so `Stop()` can reach it.
+- **`Stop()`** — call `stopProc(cmd)` to kill the process, and reverse anything
+  global you set up (e.g. Tailscale runs `tailscale funnel reset`).
+
+**2. Register it for auto-detect** — add it to the slice in `startTunnel`, in
+priority order (first `Available()` wins under bare `--public`):
+
+```go
+providers := []Tunnel{
+	&tailscaleTunnel{},
+	&cloudflaredTunnel{},
+	&ngrokTunnel{},
+	&boreTunnel{}, // ← your provider
+}
+```
+
+**3. (Optional) add a force flag** so users can pin it. In `parseArgs`
+(`main.go`), add your flag to the tunnel case:
+
+```go
+case "--tailscale", "--cloudflared", "--ngrok", "--bore":
+	c.public = true
+	c.provider = strings.TrimPrefix(argv[i], "--")
+```
+
+That's it — `startTunnelOnce` starts the tunnel and the banner prints the URL
+automatically; no other wiring. Worked sketch for a CLI that prints its URL on
+stderr:
+
+```go
+type boreTunnel struct{ cmd *exec.Cmd }
+
+func (b *boreTunnel) Name() string    { return "bore" }
+func (b *boreTunnel) Available() bool { return have("bore") }
+
+var boreURLRe = regexp.MustCompile(`https://[a-z0-9.-]+\.example\.com`)
+
+func (b *boreTunnel) Start(port int) (string, error) {
+	b.cmd = exec.Command("bore", "local", fmt.Sprintf("%d", port), "--to", "bore.example.com")
+	stderr, err := b.cmd.StderrPipe()
+	if err != nil {
+		return "", err
+	}
+	if err := b.cmd.Start(); err != nil {
+		return "", err
+	}
+	select {
+	case url, ok := <-scanForURL(stderr, boreURLRe):
+		if !ok || url == "" {
+			stopProc(b.cmd)
+			return "", fmt.Errorf("bore did not report a URL")
+		}
+		return url, nil
+	case <-time.After(20 * time.Second):
+		stopProc(b.cmd)
+		return "", fmt.Errorf("timed out waiting for bore URL")
+	}
+}
+
+func (b *boreTunnel) Stop() { stopProc(b.cmd) }
+```
+
+Keep it dependency-free: shell out to the CLI, don't pull in an SDK. Remember a
+tunnel exposes the **whole port** to the internet, unauthenticated — same caveat
+as the built-in providers.
 
 ### Contributing
 
