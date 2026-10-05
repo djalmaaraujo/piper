@@ -55,12 +55,14 @@ homebrew_casks:
       name: goreleaser-bot
       email: bot@goreleaser.com
     # Remove the quarantine xattr so Gatekeeper doesn't block the unsigned binary.
-    hooks:
-      post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/piper"]
-          end
+    # hooks.post.install still writes the deprecated `postflight` (goreleaser/goreleaser#6870), hence custom_block.
+    # The whole cask passes through the template engine, so Homebrew's {{staged_path}} token must be escaped.
+    custom_block: |
+      postflight_steps do
+        on_macos do
+          run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ "{{staged_path}}" }}/piper"], must_succeed: false
+        end
+      end
 
 release:
   github:
